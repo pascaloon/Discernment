@@ -49,9 +49,6 @@
     <Compile Include="Discernment.InProcPackage.cs" />
   </ItemGroup>
   <ItemGroup>
-    <Content Include="DiscernmentExtensionPack.vsext">
-      <IncludeInVSIX>true</IncludeInVSIX>
-    </Content>
     <None Include="source.extension.vsixmanifest">
       <SubType>Designer</SubType>
     </None>
