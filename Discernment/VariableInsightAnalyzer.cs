@@ -1157,6 +1157,7 @@ namespace Discernment
 
             return new InsightNode
             {
+                Id = $"{symbol.ToDisplayString()}@{locationString}",
                 Name = symbol.Name,
                 Type = symbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat),
                 Location = locationString,

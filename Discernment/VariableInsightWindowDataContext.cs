@@ -64,7 +64,7 @@ namespace Discernment
                     foreach (var edge in Edges)
                     {
                         edge.IsHighlighted = value != null && 
-                            (edge.SourceNodeName == value.Name || edge.TargetNodeName == value.Name);
+                            (edge.SourceNodeId == value.Id || edge.TargetNodeId == value.Id);
                     }
                 }
             }
@@ -210,6 +210,7 @@ namespace Discernment
             // Add this node
             nodeList.Add(new InsightNodeViewModel
             {
+                Id = node.Id,
                 Name = node.Name,
                 Type = node.Type,
                 Location = node.Location,
@@ -237,6 +238,8 @@ namespace Discernment
                     NodeHeight = nodeHeight,
                     RelationKind = edge.RelationKind,
                     TargetKind = edge.Target.Kind,
+                    SourceNodeId = node.Id,
+                    TargetNodeId = edge.Target.Id,
                     SourceNodeName = node.Name,
                     TargetNodeName = edge.Target.Name,
                     IsHighlighted = false
@@ -266,6 +269,9 @@ namespace Discernment
     {
         private bool isSelected;
 
+        [DataMember]
+        public string Id { get; set; } = "";
+        
         [DataMember]
         public string Name { get; set; } = "";
         
@@ -373,7 +379,14 @@ namespace Discernment
             }
         }
         
-        // Store references to source and target node names for selection tracking
+        // Store references to source and target node IDs for selection tracking
+        [DataMember]
+        public string SourceNodeId { get; set; } = "";
+        
+        [DataMember]
+        public string TargetNodeId { get; set; } = "";
+        
+        // Store names for debugging/display purposes
         [DataMember]
         public string SourceNodeName { get; set; } = "";
         
