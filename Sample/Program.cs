@@ -13,7 +13,7 @@ namespace Sample
         // Fields for testing
         private static int globalCounter = 0;
         private static string userName = "DefaultUser";
-        private static int SomeGlobalVariable = 0;
+        private static int someGlobalVariable = 0;
 
         static void Main(string[] args)
         {
@@ -27,6 +27,7 @@ namespace Sample
             TestCase6_CollectionOperations();
             TestCase7_MethodParameterMapping();
             TestCase8_ObjectMethodCalls();
+            TestCase9_VirtualMethods();
         }
 
         /// <summary>
@@ -219,20 +220,79 @@ namespace Sample
         static int Method(int p1, int p2, int p3)
         {
             // This assignment doesn't affect return value - should be filtered out
-            SomeGlobalVariable = p1 * p2 * p3;
+            someGlobalVariable = p1 * p2 * p3;
             
             // temp1 doesn't affect return - should be filtered out
             int temp1 = p2 * 4;
             
             // temp2 IS part of return - should be in graph
-            int temp2 = SomeGlobalVariable * 5;
+            int temp2 = someGlobalVariable * 5;
             
             // Only temp2 (and therefore p2) affects the return value
             return temp2 * 2;
         }
 
         /// <summary>
-        /// Helper class for testing property dependencies
+        /// TEST CASE 8: Object method calls with object initializers
+        /// Try selecting: r
+        /// Expected graph:
+        ///   r → GetGreetings
+        ///   r → GetStaticGreetings (no dependencies, it's static)
+        ///   r → GetConsideredAsStatic
+        ///   GetGreetings → Name
+        ///   Name → someName (direct trace to initializer value)
+        ///   GetConsideredAsStatic → p1
+        ///   p1 → age (parameter mapping at call site)
+        /// 
+        /// Note: 'p' is NOT a direct contributor to 'r', only appears through Name initializer
+        /// </summary>
+        static void TestCase8_ObjectMethodCalls()
+        {
+            Console.WriteLine("Test Case 8: Object Method Calls");
+            
+            string someName = "Paul";
+            var p = new Person() { Name = someName };
+            int age = 4;
+
+            // Select 'r' to see: GetGreetings -> Name -> someName (simplified, no 'this' node)
+            string r = p.GetGreetings() + Person.GetStaticGreetings() + p.GetConsideredAsStatic(age);
+            
+            Console.WriteLine($"Result r: {r}\n");
+        }
+
+
+        /// <summary>
+        /// TEST CASE 9: Virtual/Abstract methods with polymorphism
+        /// Try selecting: r
+        /// Expected graph:
+        ///   r → Shape.GetArea()
+        ///   Shape.GetArea() → Rectangle.GetArea() [Override]
+        ///   Shape.GetArea() → Circle.GetArea() [Override]
+        ///   Rectangle.GetArea() → Width
+        ///   Rectangle.GetArea() → Height
+        ///   Width → s (initialized when declaring s)
+        ///   Height → s (initialized when declaring s)
+        ///   Circle.GetArea() → Radius (leaf node, no trace since s is not a Circle)
+        /// 
+        /// Note: Width and Height trace to 's' because they're initialized with literals
+        /// Radius doesn't trace to 's' because actual type is Rectangle, not Circle
+        /// </summary>
+        static void TestCase9_VirtualMethods()
+        {
+            Console.WriteLine("Test Case 9: Virtual Methods");
+            
+            Shape s = new Rectangle() { Width = 2, Height = 3 };
+            
+            // Select 'r' to see polymorphic method resolution with all overrides
+            double r = s.GetArea();
+            
+            Console.WriteLine($"Result r: {r}\n");
+        }
+
+        // ==================== Helper Classes ====================
+
+        /// <summary>
+        /// Helper class for testing property dependencies (Test Case 4)
         /// </summary>
         class User
         {
@@ -247,33 +307,9 @@ namespace Sample
             }
         }
 
-
         /// <summary>
-        /// Test Case 8: Object method calls with object initializers
-        /// Demonstrates how instance members trace directly to object initializer values.
-        /// Expected graph for 'r':
-        /// - GetGreetings -> Name -> someName (direct trace to initializer value, no intermediate 'this' node)
-        /// - GetStaticGreetings (no dependencies, it's static)
-        /// - GetConsideredAsStatic -> p1 -> age (p1 is used in return statement)
-        /// Note: 'p' is NOT a direct contributor to 'r', only appears through Name initializer
+        /// Helper class for testing object method calls (Test Case 8)
         /// </summary>
-        static void TestCase8_ObjectMethodCalls()
-        {
-            TestCase8_ObjectMethodCalls_unused();
-            string someName = "Paul";
-            var p = new Person() { Name = someName };
-            int age = 4;
-
-            // Select 'r' to see: GetGreetings -> Name -> someName (simplified, no 'this' node)
-            string r = p.GetGreetings() + Person.GetStaticGreetings() + p.GetConsideredAsStatic(age);
-        }
-
-        static void TestCase8_ObjectMethodCalls_unused()
-        {
-            string someName2 = "Paul";
-            var p = new Person() { Name = someName2 };
-        }
-
         class Person
         {
             public string Name { get; set; } = "";
@@ -295,13 +331,9 @@ namespace Sample
             }
         }
 
-
-        static void TestVirtualMethods()
-        {
-            Shape s = new Rectangle() { Width = 2, Height = 3 };
-            double r = s.GetArea();
-        }
-
+        /// <summary>
+        /// Helper classes for testing virtual/abstract methods (Test Case 9)
+        /// </summary>
         abstract class Shape
         {
             public abstract double GetArea();
