@@ -216,7 +216,7 @@ namespace Discernment
             foreach (var edge in node.Edges)
             {
                 const double nodeWidth = 300;
-                const double nodeHeight = 100;
+                const double nodeHeight = 120; // Increased to match actual rendered height
                 
                 edgeList.Add(new InsightEdgeViewModel
                 {
