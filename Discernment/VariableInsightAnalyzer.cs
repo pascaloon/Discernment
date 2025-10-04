@@ -93,6 +93,19 @@ namespace Discernment
                     graph,
                     depth,
                     cancellationToken);
+                
+                // If the method is virtual or abstract, also trace all its overrides
+                if (methodSymbol.IsVirtual || methodSymbol.IsAbstract || methodSymbol.IsOverride)
+                {
+                    await TraceMethodOverridesAsync(
+                        solution,
+                        methodSymbol,
+                        currentNode,
+                        graph,
+                        depth,
+                        cancellationToken);
+                }
+                
                 return;
             }
 
@@ -148,6 +161,29 @@ namespace Discernment
                             
                             if (objectSymbol != null)
                             {
+                                // Check if the object's actual type is compatible with the instance member's containing type
+                                // For polymorphic calls, we only want to trace if the types match
+                                var objectType = objectSymbol switch
+                                {
+                                    ILocalSymbol local => local.Type,
+                                    IParameterSymbol param => param.Type,
+                                    IFieldSymbol field => field.Type,
+                                    IPropertySymbol prop => prop.Type,
+                                    _ => null
+                                };
+                                
+                                // Check if object type is the actual instantiated type (not base type)
+                                // For example, if 's' is declared as 'Shape s = new Rectangle()', we want Rectangle, not Shape
+                                var actualType = await GetActualInstantiatedTypeAsync(solution, objectSymbol, invocationSemanticModel, cancellationToken);
+                                
+                                // Only trace if the actual instantiated type matches the instance member's containing type
+                                if (actualType != null && !SymbolEqualityComparer.Default.Equals(actualType, containingType))
+                                {
+                                    // Type mismatch - this instance member is from a different override path
+                                    // Don't create an edge
+                                    return;
+                                }
+                                
                                 // Find the object initializer for this object and look for the property assignment
                                 var objectInitValue = await FindObjectInitializerValueAsync(
                                     solution, objectSymbol, symbol, invocationSemanticModel, cancellationToken);
@@ -180,6 +216,30 @@ namespace Discernment
                                         graph,
                                         depth + 1,
                                         cancellationToken);
+                                }
+                                else
+                                {
+                                    // No variable found (likely a literal value like '2' or '"text"')
+                                    // Trace back to the object variable itself to show the assignment relationship
+                                    if (!_symbolToNodeMap.TryGetValue(objectSymbol, out var objectNode))
+                                    {
+                                        objectNode = CreateNode(objectSymbol);
+                                        _symbolToNodeMap[objectSymbol] = objectNode;
+                                        graph.AllNodes.Add(objectNode);
+                                    }
+
+                                    var edge = new InsightEdge
+                                    {
+                                        Target = objectNode,
+                                        RelationKind = "Object Initializer",
+                                        SourceLocation = objectSymbol.Locations.FirstOrDefault() != null
+                                            ? GetLocationString(objectSymbol.Locations.First())
+                                            : "Unknown"
+                                    };
+                                    currentNode.Edges.Add(edge);
+
+                                    // DON'T continue tracing from the object variable - it's a literal assignment
+                                    // The edge shows the assignment, but we stop here since the value is a constant
                                 }
                             }
                         }
@@ -247,6 +307,225 @@ namespace Discernment
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Traces all overrides of a virtual or abstract method.
+        /// </summary>
+        private async Task TraceMethodOverridesAsync(
+            Solution solution,
+            IMethodSymbol methodSymbol,
+            InsightNode methodNode,
+            VariableInsightGraph graph,
+            int depth,
+            CancellationToken cancellationToken)
+        {
+            // Get the base method (if this is an override)
+            var baseMethod = methodSymbol.IsOverride ? methodSymbol.OverriddenMethod : methodSymbol;
+            if (baseMethod == null)
+                baseMethod = methodSymbol;
+
+            // Find all types in the solution that derive from the containing type
+            var containingType = baseMethod.ContainingType;
+            if (containingType == null)
+                return;
+
+            // Search all projects in the solution
+            foreach (var project in solution.Projects)
+            {
+                var compilation = await project.GetCompilationAsync(cancellationToken);
+                if (compilation == null)
+                    continue;
+
+                // Find all types that derive from the containing type
+                var allTypes = GetAllTypes(compilation.Assembly.GlobalNamespace);
+                
+                foreach (var type in allTypes)
+                {
+                    // Skip the base type itself
+                    if (SymbolEqualityComparer.Default.Equals(type, containingType))
+                        continue;
+
+                    // Check if this type derives from the containing type
+                    if (!IsDerivedFrom(type, containingType))
+                        continue;
+
+                    // Find the overriding method in this derived type
+                    var overridingMethod = type.GetMembers()
+                        .OfType<IMethodSymbol>()
+                        .FirstOrDefault(m => 
+                            m.IsOverride && 
+                            SymbolEqualityComparer.Default.Equals(GetBaseMethod(m), baseMethod));
+
+                    if (overridingMethod == null)
+                        continue;
+
+                    // Create node for the override
+                    if (!_symbolToNodeMap.TryGetValue(overridingMethod, out var overrideNode))
+                    {
+                        overrideNode = CreateNode(overridingMethod);
+                        _symbolToNodeMap[overridingMethod] = overrideNode;
+                        graph.AllNodes.Add(overrideNode);
+                    }
+
+                    // Create "Override" edge
+                    var existingEdge = methodNode.Edges.FirstOrDefault(e => e.Target == overrideNode);
+                    if (existingEdge == null)
+                    {
+                        var edge = new InsightEdge
+                        {
+                            Target = overrideNode,
+                            RelationKind = "Override",
+                            SourceLocation = overridingMethod.Locations.FirstOrDefault() != null
+                                ? GetLocationString(overridingMethod.Locations.First())
+                                : "Unknown"
+                        };
+                        methodNode.Edges.Add(edge);
+                    }
+
+                    // Associate the override method with the same invocation as the base method
+                    // This allows instance members used by the override to trace back to the correct object
+                    if (_methodInvocations.TryGetValue(methodSymbol, out var baseInvocation))
+                    {
+                        if (!_methodInvocations.ContainsKey(overridingMethod))
+                        {
+                            _methodInvocations[overridingMethod] = baseInvocation;
+                        }
+                    }
+                    else if (_methodInvocations.TryGetValue(baseMethod, out var realBaseInvocation))
+                    {
+                        if (!_methodInvocations.ContainsKey(overridingMethod))
+                        {
+                            _methodInvocations[overridingMethod] = realBaseInvocation;
+                        }
+                    }
+
+                    // Recursively trace the override's dependencies
+                    await TraceMethodReturnDependenciesAsync(
+                        solution,
+                        overridingMethod,
+                        overrideNode,
+                        graph,
+                        depth + 1,
+                        cancellationToken);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the base method for an overriding method.
+        /// </summary>
+        private IMethodSymbol GetBaseMethod(IMethodSymbol method)
+        {
+            var current = method;
+            while (current.OverriddenMethod != null)
+            {
+                current = current.OverriddenMethod;
+            }
+            return current;
+        }
+
+        /// <summary>
+        /// Gets all types from a namespace recursively.
+        /// </summary>
+        private IEnumerable<INamedTypeSymbol> GetAllTypes(INamespaceSymbol namespaceSymbol)
+        {
+            foreach (var type in namespaceSymbol.GetTypeMembers())
+            {
+                yield return type;
+                
+                // Recursively get nested types
+                foreach (var nestedType in GetNestedTypes(type))
+                {
+                    yield return nestedType;
+                }
+            }
+
+            foreach (var nestedNamespace in namespaceSymbol.GetNamespaceMembers())
+            {
+                foreach (var type in GetAllTypes(nestedNamespace))
+                {
+                    yield return type;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets all nested types recursively.
+        /// </summary>
+        private IEnumerable<INamedTypeSymbol> GetNestedTypes(INamedTypeSymbol type)
+        {
+            foreach (var nestedType in type.GetTypeMembers())
+            {
+                yield return nestedType;
+                foreach (var deeplyNested in GetNestedTypes(nestedType))
+                {
+                    yield return deeplyNested;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Checks if a type derives from a base type.
+        /// </summary>
+        private bool IsDerivedFrom(INamedTypeSymbol derivedType, INamedTypeSymbol baseType)
+        {
+            var current = derivedType.BaseType;
+            while (current != null)
+            {
+                if (SymbolEqualityComparer.Default.Equals(current, baseType))
+                    return true;
+                current = current.BaseType;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Gets the actual instantiated type of a symbol at runtime.
+        /// For example, for 'Shape s = new Rectangle()', returns Rectangle, not Shape.
+        /// </summary>
+        private async Task<INamedTypeSymbol?> GetActualInstantiatedTypeAsync(
+            Solution solution,
+            ISymbol symbol,
+            SemanticModel invocationSemanticModel,
+            CancellationToken cancellationToken)
+        {
+            // Find the declaration of the symbol
+            var location = symbol.Locations.FirstOrDefault(l => l.IsInSource);
+            if (location == null)
+                return null;
+
+            var syntaxTree = location.SourceTree;
+            if (syntaxTree == null)
+                return null;
+
+            // Get the semantic model for the symbol's declaration location
+            var doc = solution.GetDocument(syntaxTree);
+            var semanticModel = doc != null ? await doc.GetSemanticModelAsync(cancellationToken) : null;
+            if (semanticModel == null)
+                return null;
+
+            var root = await syntaxTree.GetRootAsync(cancellationToken);
+            var node = root.FindNode(location.SourceSpan);
+
+            // Look for the variable declarator
+            var variableDeclarator = node.AncestorsAndSelf().OfType<VariableDeclaratorSyntax>().FirstOrDefault();
+            if (variableDeclarator?.Initializer?.Value is ObjectCreationExpressionSyntax objectCreation)
+            {
+                // Get the type being instantiated
+                var typeInfo = semanticModel.GetTypeInfo(objectCreation, cancellationToken);
+                return typeInfo.Type as INamedTypeSymbol;
+            }
+
+            // Check if it's in an assignment expression
+            var assignment = node.AncestorsAndSelf().OfType<AssignmentExpressionSyntax>().FirstOrDefault();
+            if (assignment?.Right is ObjectCreationExpressionSyntax assignCreation)
+            {
+                var typeInfo = semanticModel.GetTypeInfo(assignCreation, cancellationToken);
+                return typeInfo.Type as INamedTypeSymbol;
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -442,17 +721,30 @@ namespace Discernment
             if (semanticModel == null)
                 return;
 
+            var returnContributors = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+            var returnExpressions = new List<ExpressionSyntax>();
+
             // Find all return statements
             var returnStatements = methodDeclaration.DescendantNodes().OfType<ReturnStatementSyntax>();
-            var returnContributors = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
-
             foreach (var returnStatement in returnStatements)
             {
-                if (returnStatement.Expression == null)
-                    continue;
+                if (returnStatement.Expression != null)
+                {
+                    returnExpressions.Add(returnStatement.Expression);
+                }
+            }
 
+            // Also check for expression-bodied methods (e.g., => Width * Height)
+            if (methodDeclaration.ExpressionBody?.Expression != null)
+            {
+                returnExpressions.Add(methodDeclaration.ExpressionBody.Expression);
+            }
+
+            // Extract contributors from all return expressions
+            foreach (var returnExpression in returnExpressions)
+            {
                 // Extract all symbols that contribute to this return value
-                var identifiers = returnStatement.Expression.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>();
+                var identifiers = returnExpression.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>();
                 foreach (var identifier in identifiers)
                 {
                     var symbol = semanticModel.GetSymbolInfo(identifier, cancellationToken).Symbol;
@@ -462,8 +754,8 @@ namespace Discernment
                     }
                 }
 
-                // Handle method calls in return statements
-                var invocations = returnStatement.Expression.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>();
+                // Handle method calls in return expressions
+                var invocations = returnExpression.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>();
                 foreach (var inv in invocations)
                 {
                     var invokedMethod = semanticModel.GetSymbolInfo(inv, cancellationToken).Symbol as IMethodSymbol;
@@ -914,4 +1206,5 @@ namespace Discernment
         }
     }
 }
+
 

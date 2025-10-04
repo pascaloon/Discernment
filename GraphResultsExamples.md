@@ -123,3 +123,47 @@ p1 -> age // callsite mapping for parameter
 
 Some Notes:
 - `p` isn't directly affecting `r` only indirectly.
+
+
+## Example 4: Virtual Methods
+
+We want to show dependency links of a call to all its overrides 
+
+```cs
+Shape s = new Rectangle() { Width = 2, Height = 3 };
+double r = s.GetArea();
+
+abstract class Shape
+{
+    public abstract double GetArea();
+}
+
+class Rectangle : Shape
+{
+    public double Width { get; set; }
+    public double Height { get; set; }
+    public override double GetArea() => Width * Height;
+}
+
+class Circle : Shape
+{
+    public double Radius { get; set; }
+    public override double GetArea() => 3.14 * Radius * Radius;
+}
+```
+
+Expected Results:
+```
+r (root) -> Shape.GetArea()
+Shape.GetArea() -> Rectangle.GetArea() // Override dependency
+Shape.GetArea() -> Circle.GetArea() // Override dependency
+
+Rectangle.GetArea() -> Width
+Rectangle.GetArea() -> Height
+
+Width -> s // inline declaration
+Height -> s // inline declaration
+
+Circle.GetArea() -> Radius
+
+```

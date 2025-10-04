@@ -381,6 +381,25 @@ namespace Discernment
         public string TargetNodeName { get; set; } = "";
         
         /// <summary>
+        /// Gets whether this edge should show a label.
+        /// Only show labels for special edge types like "Override".
+        /// </summary>
+        [DataMember]
+        public bool ShowLabel => RelationKind == "Override";
+        
+        /// <summary>
+        /// Gets the X position for the edge label (center of the edge).
+        /// </summary>
+        [DataMember]
+        public double LabelX => (SourceX + TargetX) / 2 + NodeWidth / 2;
+        
+        /// <summary>
+        /// Gets the Y position for the edge label (center of the edge).
+        /// </summary>
+        [DataMember]
+        public double LabelY => (SourceY + TargetY) / 2 + NodeHeight / 2;
+        
+        /// <summary>
         /// Gets the color for the edge based on target node kind.
         /// Returns a dimmed version of the node kind color.
         /// </summary>

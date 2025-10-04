@@ -294,5 +294,31 @@ namespace Sample
                 return $"Hi! I'm {p1} years old.";
             }
         }
+
+
+        static void TestVirtualMethods()
+        {
+            Shape s = new Rectangle() { Width = 2, Height = 3 };
+            double r = s.GetArea();
+        }
+
+        abstract class Shape
+        {
+            public abstract double GetArea();
+        }
+
+        class Rectangle : Shape
+        {
+            public double Width { get; set; }
+            public double Height { get; set; }
+            public override double GetArea() => Width * Height;
+        }
+
+        class Circle : Shape
+        {
+            public double Radius { get; set; }
+            public override double GetArea() => 3.14 * Radius * Radius;
+        }
+
     } // End of Program class
 }

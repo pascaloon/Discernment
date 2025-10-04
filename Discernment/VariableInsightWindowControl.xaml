@@ -1,5 +1,8 @@
 <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <DataTemplate.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+    </DataTemplate.Resources>
     <Grid Background="#FF252526">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -96,12 +99,29 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <!-- Use Path with combined geometry for line and arrowhead -->
-                            <Path Stroke="{Binding EdgeColor}" 
-                                  StrokeThickness="3"
-                                  Fill="{Binding EdgeColor}"
-                                  Opacity="{Binding EdgeOpacity}"
-                                  Data="{Binding PathData}"/>
+                            <Canvas>
+                                <!-- Use Path with combined geometry for line and arrowhead -->
+                                <Path Stroke="{Binding EdgeColor}" 
+                                      StrokeThickness="3"
+                                      Fill="{Binding EdgeColor}"
+                                      Opacity="{Binding EdgeOpacity}"
+                                      Data="{Binding PathData}"/>
+                                
+                                <!-- Edge label (only shown for certain edge types like "Override") -->
+                                <Border Canvas.Left="{Binding LabelX}" 
+                                        Canvas.Top="{Binding LabelY}"
+                                        Background="#FF2D2D30"
+                                        BorderBrush="{Binding EdgeColor}"
+                                        BorderThickness="1"
+                                        CornerRadius="3"
+                                        Padding="6,2"
+                                        Visibility="{Binding ShowLabel, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <TextBlock Text="{Binding RelationKind}" 
+                                              Foreground="#FFFFFFFF"
+                                              FontSize="11"
+                                              FontWeight="Bold"/>
+                                </Border>
+                            </Canvas>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
