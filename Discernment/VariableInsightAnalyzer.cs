@@ -109,6 +109,87 @@ namespace Discernment
                 return;
             }
 
+            // Special case: For instance fields/properties, trace to object initializer assignments
+            // This happens when we're analyzing a method and encounter an instance member
+            if ((symbol is IFieldSymbol fieldSymbol && !fieldSymbol.IsStatic) ||
+                (symbol is IPropertySymbol propSymbol && !propSymbol.IsStatic))
+            {
+                // Find the method invocation that uses this instance member
+                var containingType = symbol.ContainingType;
+                if (containingType != null)
+                {
+                    // Look for method invocations on this type
+                    IMethodSymbol? containingMethod = null;
+                    InvocationExpressionSyntax? invocation = null;
+                    
+                    foreach (var kvp in _methodInvocations)
+                    {
+                        if (SymbolEqualityComparer.Default.Equals(kvp.Key.ContainingType, containingType) &&
+                            !kvp.Key.IsStatic)
+                        {
+                            containingMethod = kvp.Key;
+                            invocation = kvp.Value;
+                            break;
+                        }
+                    }
+                    
+                    if (invocation != null && invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+                    {
+                        // Get the semantic model for the invocation site
+                        var invocationRoot = await invocation.SyntaxTree.GetRootAsync(cancellationToken);
+                        var invocationDoc = solution.GetDocument(invocation.SyntaxTree);
+                        var invocationSemanticModel = invocationDoc != null ? 
+                            await invocationDoc.GetSemanticModelAsync(cancellationToken) : null;
+                        
+                        if (invocationSemanticModel != null)
+                        {
+                            // Get the object symbol (e.g., 'p' in 'p.GetGreetings()')
+                            var objectSymbol = invocationSemanticModel.GetSymbolInfo(memberAccess.Expression, cancellationToken).Symbol;
+                            
+                            if (objectSymbol != null)
+                            {
+                                // Find the object initializer for this object and look for the property assignment
+                                var objectInitValue = await FindObjectInitializerValueAsync(
+                                    solution, objectSymbol, symbol, invocationSemanticModel, cancellationToken);
+                                
+                                if (objectInitValue != null)
+                                {
+                                    // Create node and edge for the initializer value
+                                    if (!_symbolToNodeMap.TryGetValue(objectInitValue, out var valueNode))
+                                    {
+                                        valueNode = CreateNode(objectInitValue);
+                                        _symbolToNodeMap[objectInitValue] = valueNode;
+                                        graph.AllNodes.Add(valueNode);
+                                    }
+
+                                    var edge = new InsightEdge
+                                    {
+                                        Target = valueNode,
+                                        RelationKind = "Object Initializer",
+                                        SourceLocation = symbol.Locations.FirstOrDefault() != null
+                                            ? GetLocationString(symbol.Locations.First())
+                                            : "Unknown"
+                                    };
+                                    currentNode.Edges.Add(edge);
+
+                                    // Continue tracing from the initializer value
+                                    await TraceDataFlowBackwardAsync(
+                                        solution,
+                                        objectInitValue,
+                                        valueNode,
+                                        graph,
+                                        depth + 1,
+                                        cancellationToken);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Don't look for regular assignments for instance members
+                return;
+            }
+            
             // Find all write operations (assignments) to this symbol
             var assignments = await FindAssignmentsToSymbolAsync(solution, symbol, cancellationToken);
 
@@ -166,6 +247,100 @@ namespace Discernment
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Finds the value assigned to a property/field in an object initializer.
+        /// For example, in 'var p = new Person() {Name = "Paul"}', finds "Paul" for Name.
+        /// </summary>
+        private async Task<ISymbol?> FindObjectInitializerValueAsync(
+            Solution solution,
+            ISymbol objectSymbol,
+            ISymbol memberSymbol,
+            SemanticModel invocationSemanticModel,
+            CancellationToken cancellationToken)
+        {
+            // Find the declaration/assignment of the object
+            var objectLocations = objectSymbol.Locations;
+            
+            foreach (var location in objectLocations)
+            {
+                if (!location.IsInSource)
+                    continue;
+                    
+                var syntaxTree = location.SourceTree;
+                if (syntaxTree == null)
+                    continue;
+                    
+                // Get the semantic model for where the object is declared, not where it's invoked
+                var document = solution.GetDocument(syntaxTree);
+                if (document == null)
+                    continue;
+                    
+                var declarationSemanticModel = await document.GetSemanticModelAsync(cancellationToken);
+                if (declarationSemanticModel == null)
+                    continue;
+                    
+                var root = await syntaxTree.GetRootAsync(cancellationToken);
+                var node = root.FindNode(location.SourceSpan);
+                
+                // Look for object creation with initializer
+                // The node might be the identifier in a variable declarator, so we need to find the actual initializer
+                ObjectCreationExpressionSyntax? objectCreation = null;
+                
+                // Check if it's in a variable declarator (e.g., var p = new Person() { ... })
+                var variableDeclarator = node.AncestorsAndSelf().OfType<VariableDeclaratorSyntax>().FirstOrDefault();
+                if (variableDeclarator?.Initializer?.Value is ObjectCreationExpressionSyntax varDeclCreation)
+                {
+                    objectCreation = varDeclCreation;
+                }
+                
+                // Check if it's in an assignment (e.g., p = new Person() { ... })
+                if (objectCreation == null)
+                {
+                    var assignment = node.AncestorsAndSelf().OfType<AssignmentExpressionSyntax>().FirstOrDefault();
+                    if (assignment?.Right is ObjectCreationExpressionSyntax assignCreation)
+                    {
+                        objectCreation = assignCreation;
+                    }
+                }
+                
+                // Also check if the node itself or its ancestors are the object creation
+                if (objectCreation == null)
+                {
+                    objectCreation = node.AncestorsAndSelf()
+                        .OfType<ObjectCreationExpressionSyntax>()
+                        .FirstOrDefault();
+                }
+                    
+                if (objectCreation?.Initializer == null)
+                    continue;
+                    
+                // Find the assignment to our member in the initializer
+                foreach (var expression in objectCreation.Initializer.Expressions)
+                {
+                    if (expression is AssignmentExpressionSyntax assignment)
+                    {
+                        // Check if this is assigning to our member (use declaration semantic model)
+                        var leftSymbol = declarationSemanticModel.GetSymbolInfo(assignment.Left, cancellationToken).Symbol;
+                        
+                        if (SymbolEqualityComparer.Default.Equals(leftSymbol, memberSymbol))
+                        {
+                            // Found the assignment! Get the symbol of the right side
+                            if (assignment.Right is IdentifierNameSyntax identifier)
+                            {
+                                var valueSymbol = declarationSemanticModel.GetSymbolInfo(identifier, cancellationToken).Symbol;
+                                if (valueSymbol != null && IsAnalyzableSymbol(valueSymbol))
+                                {
+                                    return valueSymbol;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            return null;
         }
 
         /// <summary>
@@ -479,31 +654,42 @@ namespace Discernment
             if (valueExpression == null)
                 return contributors;
 
-            // First, collect all invocation nodes to exclude their arguments
+            // First, collect all invocation nodes to exclude their arguments and objects
             var invocations = valueExpression.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>().ToList();
-            var argumentNodes = new HashSet<SyntaxNode>();
+            var excludedNodes = new HashSet<SyntaxNode>();
             
             foreach (var invocation in invocations)
             {
                 // Mark all argument expressions as "inside method call" - these should NOT be direct contributors
                 foreach (var argument in invocation.ArgumentList.Arguments)
                 {
-                    argumentNodes.Add(argument.Expression);
+                    excludedNodes.Add(argument.Expression);
                     // Also mark all descendants of the argument
                     foreach (var descendant in argument.Expression.DescendantNodesAndSelf())
                     {
-                        argumentNodes.Add(descendant);
+                        excludedNodes.Add(descendant);
+                    }
+                }
+                
+                // Also exclude the object part of instance method calls (e.g., 'p' in 'p.GetGreetings()')
+                // The object should be traced through 'this' parameter mapping, not as a direct contributor
+                if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+                {
+                    excludedNodes.Add(memberAccess.Expression);
+                    foreach (var descendant in memberAccess.Expression.DescendantNodesAndSelf())
+                    {
+                        excludedNodes.Add(descendant);
                     }
                 }
             }
 
             // Extract identifiers (variables, parameters, fields, properties)
-            // BUT skip those inside method call arguments
+            // BUT skip those inside method call arguments or object expressions
             var identifiers = valueExpression.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>();
             foreach (var identifier in identifiers)
             {
-                // Skip if this identifier is inside a method call's arguments
-                if (argumentNodes.Contains(identifier))
+                // Skip if this identifier is excluded (inside arguments or object part of member access)
+                if (excludedNodes.Contains(identifier))
                 {
                     continue;
                 }

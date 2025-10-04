@@ -26,6 +26,7 @@ namespace Sample
             TestCase5_ComplexDependencies();
             TestCase6_CollectionOperations();
             TestCase7_MethodParameterMapping();
+            TestCase8_ObjectMethodCalls();
         }
 
         /// <summary>
@@ -224,26 +225,74 @@ namespace Sample
             int temp1 = p2 * 4;
             
             // temp2 IS part of return - should be in graph
-            int temp2 = p2 * 5;
+            int temp2 = SomeGlobalVariable * 5;
             
             // Only temp2 (and therefore p2) affects the return value
             return temp2 * 2;
         }
-    }
 
-    /// <summary>
-    /// Helper class for testing property dependencies
-    /// </summary>
-    class User
-    {
-        public string FirstName { get; set; } = "";
-        public string LastName { get; set; } = "";
-        
-        public string GetFullName()
+        /// <summary>
+        /// Helper class for testing property dependencies
+        /// </summary>
+        class User
         {
-            // Select 'fullName' to see it depends on FirstName and LastName properties
-            string fullName = $"{FirstName} {LastName}";
-            return fullName;
+            public string FirstName { get; set; } = "";
+            public string LastName { get; set; } = "";
+            
+            public string GetFullName()
+            {
+                // Select 'fullName' to see it depends on FirstName and LastName properties
+                string fullName = $"{FirstName} {LastName}";
+                return fullName;
+            }
         }
-    }
+
+
+        /// <summary>
+        /// Test Case 8: Object method calls with object initializers
+        /// Demonstrates how instance members trace directly to object initializer values.
+        /// Expected graph for 'r':
+        /// - GetGreetings -> Name -> someName (direct trace to initializer value, no intermediate 'this' node)
+        /// - GetStaticGreetings (no dependencies, it's static)
+        /// - GetConsideredAsStatic -> p1 -> age (p1 is used in return statement)
+        /// Note: 'p' is NOT a direct contributor to 'r', only appears through Name initializer
+        /// </summary>
+        static void TestCase8_ObjectMethodCalls()
+        {
+            TestCase8_ObjectMethodCalls_unused();
+            string someName = "Paul";
+            var p = new Person() { Name = someName };
+            int age = 4;
+
+            // Select 'r' to see: GetGreetings -> Name -> someName (simplified, no 'this' node)
+            string r = p.GetGreetings() + Person.GetStaticGreetings() + p.GetConsideredAsStatic(age);
+        }
+
+        static void TestCase8_ObjectMethodCalls_unused()
+        {
+            string someName2 = "Paul";
+            var p = new Person() { Name = someName2 };
+        }
+
+        class Person
+        {
+            public string Name { get; set; } = "";
+
+            public string GetGreetings()
+            {
+                return $"Hi! I'm {Name}.";
+            }
+
+            public static string GetStaticGreetings()
+            {
+                return $"Hi! I'm someone.";
+            }
+
+            public string GetConsideredAsStatic(int p1)
+            {
+                string a = Name;
+                return $"Hi! I'm {p1} years old.";
+            }
+        }
+    } // End of Program class
 }
