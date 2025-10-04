@@ -10,9 +10,10 @@ namespace Sample
     /// </summary>
     class Program
     {
-        // Field for testing
+        // Fields for testing
         private static int globalCounter = 0;
         private static string userName = "DefaultUser";
+        private static int SomeGlobalVariable = 0;
 
         static void Main(string[] args)
         {
@@ -24,6 +25,7 @@ namespace Sample
             TestCase4_PropertyChain();
             TestCase5_ComplexDependencies();
             TestCase6_CollectionOperations();
+            TestCase7_MethodParameterMapping();
         }
 
         /// <summary>
@@ -178,6 +180,54 @@ namespace Sample
             int sum = doubled.Sum();
             
             Console.WriteLine($"Sum: {sum}\n");
+        }
+
+        /// <summary>
+        /// TEST CASE 7: Method parameter mapping and return value analysis
+        /// Try selecting: r
+        /// Expected graph:
+        ///   r → Method (method call itself)
+        ///   r → c (direct usage OUTSIDE method - in the addition)
+        ///   r → d (direct usage OUTSIDE method - in the addition)
+        ///   Method → temp2 (return contributor)
+        ///   temp2 → p2 (parameter used in return)
+        ///   p2 → b (argument mapping at call site)
+        /// 
+        /// Important: Arguments INSIDE method call (a, b, c in Method(...)) are NOT direct contributors!
+        /// They only appear if they affect the return value (through parameter mapping).
+        /// </summary>
+        static void TestCase7_MethodParameterMapping()
+        {
+            Console.WriteLine("Test Case 7: Method Parameter Mapping");
+            
+            int a = 2;
+            int b = 3;
+            int c = 4;
+            int d = 5;
+            
+            // Select 'r' to see:
+            // - Direct: Method (method itself), c (in + c), d (in + d)
+            // - NOT Direct: a, b (inside method arguments - resolved through parameter mapping)
+            // - Method path: Method -> temp2 -> p2 -> b
+            // - Discarded: a (doesn't affect return), c as param p3 (doesn't affect return)
+            int r = Method(a, b, c) + c + d;
+            
+            Console.WriteLine($"Result r: {r}\n");
+        }
+
+        static int Method(int p1, int p2, int p3)
+        {
+            // This assignment doesn't affect return value - should be filtered out
+            SomeGlobalVariable = p1 * p2 * p3;
+            
+            // temp1 doesn't affect return - should be filtered out
+            int temp1 = p2 * 4;
+            
+            // temp2 IS part of return - should be in graph
+            int temp2 = p2 * 5;
+            
+            // Only temp2 (and therefore p2) affects the return value
+            return temp2 * 2;
         }
     }
 

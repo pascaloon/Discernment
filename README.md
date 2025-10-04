@@ -5,17 +5,36 @@ This is a Visual Studio 2022 extension to help navigate C# code. This is using `
 ## Variable Insight Tool Window
 Select any variable or class field in the text editor and use the extension command to open the Variable Insight tool window with a complete dependency graph.
 
-The **Variable Insight** is an interactive dockable tool window that displays a comprehensive 2D graph of all references affecting a selected variable. For each reference, we recursively analyze what elements affect it, building a complete dependency graph showing everything that influences the variable directly and indirectly. Only write operations (assignments, initializations) and method calls are included to show truly impactful relationships.
+The **Variable Insight** is an interactive dockable tool window that displays a comprehensive 2D graph of all references affecting a selected variable. For each reference, we recursively analyze what elements affect it, building a complete dependency graph showing everything that influences the variable directly and indirectly. 
+
+**Smart Method Analysis**: When methods are used, they appear as explicit nodes in the graph. The analyzer:
+- Traces through return statements to find contributing symbols
+- Maps parameters back to actual arguments at the call site
+- Filters out local variables and parameters that don't affect the return value
+- Shows the chain: `root → Method → parameter → actual argument`
+
+**Example**: For `int r = Method(a, b, c) + c + d;` where only parameter `p2` (mapped to `b`) affects the return:
+```
+r → Method (method call itself)
+r → c (direct usage - OUTSIDE method arguments)
+r → d (direct usage - OUTSIDE method arguments)
+Method → temp2 (return contributor)
+temp2 → p2 (parameter)
+p2 → b (argument mapping at call site)
+```
+Note: `a`, `b`, `c` inside `Method(a, b, c)` are **NOT direct contributors**. They only appear through parameter mapping if they affect the return.
 
 ### Key Features:
-- **Interactive 2D Graph**: Visual node-and-edge graph with pan capabilities and visible edges
-- **Clickable Nodes**: Click any node to select it (highlighted with blue border) and open the source file
+- **Interactive 2D Graph**: Visual node-and-edge graph with pan capabilities and visible cyan edges
+- **Method Nodes**: Methods appear as dedicated nodes with parameter-to-argument mapping
+- **Parameter Mapping**: Parameters appear as intermediate nodes linking to actual arguments at call site
+- **Clickable Nodes**: Click any node to select it (highlighted with blue border) and get navigation info
 - **Dockable Tool Window**: Full Visual Studio tool window that can be docked anywhere
 - **Complete Dependency Graph**: Shows all direct and indirect influences on a variable
-- **Source Code Display**: Each node shows the actual line of code where the variable is used
-- **Visual Hierarchy**: Hierarchical layout with connecting blue edges showing dependency flow
+- **Source Code Display**: Each node shows the actual line of code where the symbol is defined/used
+- **Visual Hierarchy**: Hierarchical layout (250px vertical spacing) with connecting cyan edges showing dependency flow
 - **Real-time Analysis**: Uses Roslyn semantic analysis for accurate backward data flow analysis
-- **Filtered References**: Only shows operations that actually affect the variable
+- **Smart Filtering**: Only shows operations that actually affect the variable, including return-value analysis for methods
 
 **Note**: Due to out-of-process extension limitations, clicking a node opens the source file but doesn't automatically jump to the specific line. You'll need to use Ctrl+G to go to the line number shown on the node.
 
