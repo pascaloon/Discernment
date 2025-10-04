@@ -216,15 +216,16 @@ namespace Discernment
             foreach (var edge in node.Edges)
             {
                 const double nodeWidth = 300;
-                const double nodeVisualHeight = 100; // More accurate estimate of actual rendered height
-                const double edgePadding = 10; // Small padding from node edges
+                const double nodeHeight = 100;
                 
                 edgeList.Add(new InsightEdgeViewModel
                 {
-                    StartX = node.X + nodeWidth / 2, // Center of node
-                    StartY = node.Y + nodeVisualHeight + edgePadding,    // Bottom of node + padding
-                    EndX = edge.Target.X + nodeWidth / 2, // Center of target
-                    EndY = edge.Target.Y - edgePadding,   // Top of target - padding
+                    SourceX = node.X,
+                    SourceY = node.Y,
+                    TargetX = edge.Target.X,
+                    TargetY = edge.Target.Y,
+                    NodeWidth = nodeWidth,
+                    NodeHeight = nodeHeight,
                     RelationKind = edge.RelationKind
                 });
                 
@@ -290,20 +291,193 @@ namespace Discernment
     [DataContract]
     internal class InsightEdgeViewModel
     {
-        [DataMember]
-        public double StartX { get; set; }
+        private const double ArrowLength = 12;
+        private const double ArrowWidth = 8;
+        private const double ArrowGap = 3; // Gap between arrow tip and node border to keep arrow visible
         
         [DataMember]
-        public double StartY { get; set; }
+        public double SourceX { get; set; }
         
         [DataMember]
-        public double EndX { get; set; }
+        public double SourceY { get; set; }
         
         [DataMember]
-        public double EndY { get; set; }
+        public double TargetX { get; set; }
+        
+        [DataMember]
+        public double TargetY { get; set; }
+        
+        [DataMember]
+        public double NodeWidth { get; set; }
+        
+        [DataMember]
+        public double NodeHeight { get; set; }
         
         [DataMember]
         public string RelationKind { get; set; } = "";
+        
+        /// <summary>
+        /// Generates the Path data string for drawing the arrow (line + arrowhead).
+        /// </summary>
+        [DataMember]
+        public string PathData
+        {
+            get
+            {
+                // Get border intersection points
+                var (startX, startY) = GetBorderIntersection(
+                    SourceX, SourceY, TargetX, TargetY, NodeWidth, NodeHeight);
+                var (endX, endY) = GetBorderIntersection(
+                    TargetX, TargetY, SourceX, SourceY, NodeWidth, NodeHeight);
+                
+                // Calculate direction vector
+                double dx = endX - startX;
+                double dy = endY - startY;
+                double length = Math.Sqrt(dx * dx + dy * dy);
+                
+                if (length < 0.001)
+                {
+                    return ""; // No arrow if points are the same
+                }
+                
+                // Unit vector
+                double ux = dx / length;
+                double uy = dy / length;
+                
+                // Perpendicular unit vector
+                double px = -uy;
+                double py = ux;
+                
+                // Pull arrow tip back from border by ArrowGap to keep it visible
+                double tipX = endX - ux * ArrowGap;
+                double tipY = endY - uy * ArrowGap;
+                
+                // Base of arrow (where line ends and triangle starts)
+                double baseX = tipX - ux * ArrowLength;
+                double baseY = tipY - uy * ArrowLength;
+                
+                // Two corners of the arrowhead base
+                double corner1X = baseX + px * ArrowWidth / 2;
+                double corner1Y = baseY + py * ArrowWidth / 2;
+                double corner2X = baseX - px * ArrowWidth / 2;
+                double corner2Y = baseY - py * ArrowWidth / 2;
+                
+                // Build the path: Line from start to arrow base, then filled triangle for arrowhead
+                var pathBuilder = new System.Text.StringBuilder();
+                
+                // Line from start to arrow base
+                pathBuilder.AppendFormat(System.Globalization.CultureInfo.InvariantCulture,
+                    "M {0:F2},{1:F2} L {2:F2},{3:F2} ",
+                    startX, startY, baseX, baseY);
+                
+                // Arrowhead triangle (filled)
+                pathBuilder.AppendFormat(System.Globalization.CultureInfo.InvariantCulture,
+                    "M {0:F2},{1:F2} L {2:F2},{3:F2} L {4:F2},{5:F2} Z",
+                    tipX, tipY, corner1X, corner1Y, corner2X, corner2Y);
+                
+                return pathBuilder.ToString();
+            }
+        }
+        
+        /// <summary>
+        /// Calculates the intersection point between a line from the center of nodeRect to targetCenter,
+        /// and the border of nodeRect.
+        /// </summary>
+        private (double x, double y) GetBorderIntersection(
+            double nodeX, double nodeY, 
+            double targetCenterX, double targetCenterY,
+            double width, double height)
+        {
+            // Calculate center of the node
+            double centerX = nodeX + width / 2;
+            double centerY = nodeY + height / 2;
+            
+            // Calculate center of target (for direction)
+            double targetX = targetCenterX + width / 2;
+            double targetY = targetCenterY + height / 2;
+            
+            // Direction vector from node center to target center
+            double dx = targetX - centerX;
+            double dy = targetY - centerY;
+            
+            // Avoid division by zero
+            if (Math.Abs(dx) < 0.001 && Math.Abs(dy) < 0.001)
+            {
+                return (centerX, centerY);
+            }
+            
+            // Normalize to unit vector for simpler calculation
+            double length = Math.Sqrt(dx * dx + dy * dy);
+            dx /= length;
+            dy /= length;
+            
+            // Rectangle bounds
+            double left = nodeX;
+            double right = nodeX + width;
+            double top = nodeY;
+            double bottom = nodeY + height;
+            
+            // Calculate which edge we'll hit based on the direction
+            // Use a simple approach: check which edge the ray hits first
+            
+            double tMin = double.MaxValue;
+            double intersectX = centerX;
+            double intersectY = centerY;
+            
+            // Check intersection with right edge (x = right)
+            if (dx > 0.001)
+            {
+                double t = (right - centerX) / dx;
+                double y = centerY + t * dy;
+                if (y >= top && y <= bottom && t < tMin)
+                {
+                    tMin = t;
+                    intersectX = right;
+                    intersectY = y;
+                }
+            }
+            
+            // Check intersection with left edge (x = left)
+            if (dx < -0.001)
+            {
+                double t = (left - centerX) / dx;
+                double y = centerY + t * dy;
+                if (y >= top && y <= bottom && t < tMin)
+                {
+                    tMin = t;
+                    intersectX = left;
+                    intersectY = y;
+                }
+            }
+            
+            // Check intersection with bottom edge (y = bottom)
+            if (dy > 0.001)
+            {
+                double t = (bottom - centerY) / dy;
+                double x = centerX + t * dx;
+                if (x >= left && x <= right && t < tMin)
+                {
+                    tMin = t;
+                    intersectX = x;
+                    intersectY = bottom;
+                }
+            }
+            
+            // Check intersection with top edge (y = top)
+            if (dy < -0.001)
+            {
+                double t = (top - centerY) / dy;
+                double x = centerX + t * dx;
+                if (x >= left && x <= right && t < tMin)
+                {
+                    tMin = t;
+                    intersectX = x;
+                    intersectY = top;
+                }
+            }
+            
+            return (intersectX, intersectY);
+        }
     }
 }
 

@@ -224,7 +224,7 @@ namespace Sample
             int temp1 = p2 * 4;
             
             // temp2 IS part of return - should be in graph
-            int temp2 = p2 * 5;
+            int temp2 = SomeGlobalVariable * 5;
             
             // Only temp2 (and therefore p2) affects the return value
             return temp2 * 2;

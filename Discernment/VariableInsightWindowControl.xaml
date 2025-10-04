@@ -96,17 +96,11 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <!-- Thicker, more visible line -->
-                            <Line X1="{Binding StartX}" 
-                                  Y1="{Binding StartY}" 
-                                  X2="{Binding EndX}" 
-                                  Y2="{Binding EndY}"
-                                  Stroke="#FF00BFFF" 
-                                  StrokeThickness="5"
-                                  Opacity="1.0">
-                                <Line.StrokeEndLineCap>Round</Line.StrokeEndLineCap>
-                                <Line.StrokeStartLineCap>Round</Line.StrokeStartLineCap>
-                            </Line>
+                            <!-- Use Path with combined geometry for line and arrowhead -->
+                            <Path Stroke="#FF00BFFF" 
+                                  StrokeThickness="3"
+                                  Fill="#FF00BFFF"
+                                  Data="{Binding PathData}"/>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
