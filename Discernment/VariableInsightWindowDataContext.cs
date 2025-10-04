@@ -58,6 +58,14 @@ namespace Discernment
                     {
                         node.IsSelected = node == value;
                     }
+                    
+                    // Update all edges' IsHighlighted property
+                    // Highlight edges where the selected node is either source or target
+                    foreach (var edge in Edges)
+                    {
+                        edge.IsHighlighted = value != null && 
+                            (edge.SourceNodeName == value.Name || edge.TargetNodeName == value.Name);
+                    }
                 }
             }
         }
@@ -209,7 +217,8 @@ namespace Discernment
                 FilePath = FilePath,
                 LineNumber = lineNumber,
                 X = node.X,
-                Y = node.Y
+                Y = node.Y,
+                Kind = node.Kind
             });
             
             // Add edges and recursively process children
@@ -226,7 +235,11 @@ namespace Discernment
                     TargetY = edge.Target.Y,
                     NodeWidth = nodeWidth,
                     NodeHeight = nodeHeight,
-                    RelationKind = edge.RelationKind
+                    RelationKind = edge.RelationKind,
+                    TargetKind = edge.Target.Kind,
+                    SourceNodeName = node.Name,
+                    TargetNodeName = edge.Target.Name,
+                    IsHighlighted = false
                 });
                 
                 BuildGraphViewModels(edge.Target, nodeList, edgeList, visited);
@@ -276,6 +289,9 @@ namespace Discernment
         
         [DataMember]
         public double Y { get; set; }
+        
+        [DataMember]
+        public InsightNodeKind Kind { get; set; }
 
         [DataMember]
         public bool IsSelected
@@ -283,17 +299,41 @@ namespace Discernment
             get => isSelected;
             set => SetProperty(ref isSelected, value);
         }
+        
+        /// <summary>
+        /// Gets the background color for the node header based on its kind.
+        /// Colors match Visual Studio dark theme.
+        /// </summary>
+        [DataMember]
+        public string HeaderBackgroundColor
+        {
+            get
+            {
+                return Kind switch
+                {
+                    InsightNodeKind.Variable => "#FF4D4D50",    // Gray for local variables
+                    InsightNodeKind.Parameter => "#FF4D4D50",   // Gray for parameters
+                    InsightNodeKind.Field => "#FFBD632F",       // Orange for fields
+                    InsightNodeKind.Property => "#FFBD632F",    // Orange for properties
+                    InsightNodeKind.Method => "#FF267F99",      // Teal for methods
+                    _ => "#FF3E3E42"                            // Default gray
+                };
+            }
+        }
     }
 
     /// <summary>
     /// View model for an edge in the graph.
     /// </summary>
     [DataContract]
-    internal class InsightEdgeViewModel
+    internal class InsightEdgeViewModel : NotifyPropertyChangedObject
     {
         private const double ArrowLength = 12;
         private const double ArrowWidth = 8;
         private const double ArrowGap = 3; // Gap between arrow tip and node border to keep arrow visible
+        
+        private bool isHighlighted;
+        private double edgeOpacity = 0.4;
         
         [DataMember]
         public double SourceX { get; set; }
@@ -315,6 +355,61 @@ namespace Discernment
         
         [DataMember]
         public string RelationKind { get; set; } = "";
+        
+        [DataMember]
+        public InsightNodeKind TargetKind { get; set; }
+        
+        [DataMember]
+        public bool IsHighlighted
+        {
+            get => isHighlighted;
+            set
+            {
+                if (SetProperty(ref isHighlighted, value))
+                {
+                    // Also update EdgeOpacity
+                    EdgeOpacity = value ? 1.0 : 0.4;
+                }
+            }
+        }
+        
+        // Store references to source and target node names for selection tracking
+        [DataMember]
+        public string SourceNodeName { get; set; } = "";
+        
+        [DataMember]
+        public string TargetNodeName { get; set; } = "";
+        
+        /// <summary>
+        /// Gets the color for the edge based on target node kind.
+        /// Returns a dimmed version of the node kind color.
+        /// </summary>
+        [DataMember]
+        public string EdgeColor
+        {
+            get
+            {
+                return TargetKind switch
+                {
+                    InsightNodeKind.Variable => "#FF6B6B6E",      // Dimmed gray
+                    InsightNodeKind.Parameter => "#FF6B6B6E",     // Dimmed gray
+                    InsightNodeKind.Field => "#FF8B5A3D",         // Dimmed orange
+                    InsightNodeKind.Property => "#FF8B5A3D",      // Dimmed orange
+                    InsightNodeKind.Method => "#FF4A9AAE",        // Dimmed teal
+                    _ => "#FF5A5A5D"                              // Dimmed default
+                };
+            }
+        }
+        
+        /// <summary>
+        /// Gets the opacity for the edge. Full opacity when highlighted, dimmed otherwise.
+        /// </summary>
+        [DataMember]
+        public double EdgeOpacity
+        {
+            get => edgeOpacity;
+            set => SetProperty(ref edgeOpacity, value);
+        }
         
         /// <summary>
         /// Generates the Path data string for drawing the arrow (line + arrowhead).

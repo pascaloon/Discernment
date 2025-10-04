@@ -97,9 +97,10 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
                             <!-- Use Path with combined geometry for line and arrowhead -->
-                            <Path Stroke="#FF00BFFF" 
+                            <Path Stroke="{Binding EdgeColor}" 
                                   StrokeThickness="3"
-                                  Fill="#FF00BFFF"
+                                  Fill="{Binding EdgeColor}"
+                                  Opacity="{Binding EdgeOpacity}"
                                   Data="{Binding PathData}"/>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
@@ -134,12 +135,16 @@
                                         Padding="10"
                                         Width="300">
                                     <StackPanel>
-                                    <!-- Node Name -->
-                                    <TextBlock Text="{Binding Name}" 
-                                              FontWeight="Bold" 
-                                              FontSize="14"
-                                              Foreground="#FFFFFFFF"
-                                              Margin="0,0,0,5"/>
+                                    <!-- Node Name with color-coded background -->
+                                    <Border Background="{Binding HeaderBackgroundColor}"
+                                            Padding="8,4"
+                                            Margin="-10,-10,-10,5"
+                                            CornerRadius="3,3,0,0">
+                                        <TextBlock Text="{Binding Name}" 
+                                                  FontWeight="Bold" 
+                                                  FontSize="14"
+                                                  Foreground="#FFFFFFFF"/>
+                                    </Border>
                                     
                                     <!-- Type -->
                                     <TextBlock FontSize="11"
