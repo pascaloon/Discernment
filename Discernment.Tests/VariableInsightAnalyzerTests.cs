@@ -409,24 +409,42 @@ class Program
         var listNode = addRangeEdges.First(e => e.Target.Name == "list").Target;
         var listEdges = listNode.Edges.ToList();
         
+        // Debug: Print all edges from list to see what's actually there
+        Console.WriteLine($"DEBUG: list has {listEdges.Count} edges:");
+        foreach (var edge in listEdges)
+        {
+            Console.WriteLine($"  -> {edge.Target.Name} ({edge.RelationKind})");
+        }
+
         // list -> List.Add (from list.Add("Hello"))
         Assert.Contains(listEdges, e => e.Target.Name == "Add");
-        
-        // Note: Append(list, 5) detection is complex and may require additional implementation
-        // For now, we verify that the core functionality works:
-        // 1. r.AddRange(list) is detected ✅
-        // 2. list.Add("Hello") is detected ✅
-        // 3. External API parameter tracing works ✅
 
-        // Note: Argument usage detection (list -> Program.Append) is complex and may require
-        // additional implementation. The core functionality demonstrated includes:
-        // ✅ Method calls on variables (list -> List.Add)
-        // ✅ External API parameter tracing (List.AddRange -> list)
-        // ✅ Void method body tracing (Program.Append -> Add when called)
-        // ✅ Loop variable tracing (i -> count)
-        // ✅ Parameter mapping (l -> list)
+        // list -> Program.Append (from Append(list, 5))
+        Assert.Contains(listEdges, e => e.Target.Name == "Append");
 
-        // The graph structure demonstrates that the core variable insight
-        // functionality is working correctly for the main use cases
+        // Program.Append -> Add (l.Add inside Append)
+        var appendNode = listEdges.First(e => e.Target.Name == "Append").Target;
+        var appendEdges = appendNode.Edges.ToList();
+        Assert.Contains(appendEdges, e => e.Target.Name == "Add");
+
+        // One of the Add nodes should have edges to i and l
+        var addInAppendNode = appendEdges.First(e => e.Target.Name == "Add").Target;
+        var addInAppendEdges = addInAppendNode.Edges.ToList();
+
+        // List.Add -> i
+        Assert.Contains(addInAppendEdges, e => e.Target.Name == "i");
+
+        // List.Add -> l
+        Assert.Contains(addInAppendEdges, e => e.Target.Name == "l");
+
+        // i -> count (loop boundary)
+        var iNode = addInAppendEdges.First(e => e.Target.Name == "i").Target;
+        var iEdges = iNode.Edges.ToList();
+        Assert.Contains(iEdges, e => e.Target.Name == "count");
+
+        // l -> list (parameter mapping)
+        var lNode = addInAppendEdges.First(e => e.Target.Name == "l").Target;
+        var lEdges = lNode.Edges.ToList();
+        Assert.Contains(lEdges, e => e.Target.Name == "list");
     }
 }

@@ -132,7 +132,8 @@ namespace Discernment
                     }
 
                     // Check if this symbol is used as an argument in a method call (e.g., Append(list, 5))
-                    if (node.Parent is ArgumentSyntax argument &&
+                    ArgumentSyntax? argument = node as ArgumentSyntax ?? node.Parent as ArgumentSyntax;
+                    if (argument != null &&
                         argument.Parent is ArgumentListSyntax argumentList &&
                         argumentList.Parent is InvocationExpressionSyntax invocationWithArg)
                     {
@@ -364,9 +365,9 @@ namespace Discernment
                     return;
 
                 // Extract all contributing symbols from the right side of the assignment
-                var contributingSymbols = await ExtractContributingSymbolsAsync(
-                    assignmentNode, 
-                    semanticModel, 
+                var contributingSymbols = ExtractContributingSymbols(
+                    assignmentNode,
+                    semanticModel,
                     cancellationToken);
 
                 foreach (var contributingSymbol in contributingSymbols)
@@ -1059,7 +1060,7 @@ namespace Discernment
         /// Extracts all symbols and methods that contribute to an assignment.
         /// Returns both direct symbol references and method symbols (which will be treated as nodes).
         /// </summary>
-        private async Task<List<ISymbol>> ExtractContributingSymbolsAsync(
+        private List<ISymbol> ExtractContributingSymbols(
             SyntaxNode assignmentNode,
             SemanticModel semanticModel,
             CancellationToken cancellationToken)
