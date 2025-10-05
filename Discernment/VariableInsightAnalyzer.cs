@@ -816,11 +816,16 @@ namespace Discernment
             if (methodSyntax == null)
                 return;
 
-            var methodDeclaration = await methodSyntax.GetSyntaxAsync(cancellationToken) as MethodDeclarationSyntax;
-            if (methodDeclaration == null)
+            // Support both method declarations and local function declarations
+            var methodSyntaxNode = await methodSyntax.GetSyntaxAsync(cancellationToken);
+            MethodDeclarationSyntax? methodDeclaration = methodSyntaxNode as MethodDeclarationSyntax;
+            LocalFunctionStatementSyntax? localFunction = methodSyntaxNode as LocalFunctionStatementSyntax;
+
+            if (methodDeclaration == null && localFunction == null)
                 return;
 
-            var root = await methodDeclaration.SyntaxTree.GetRootAsync(cancellationToken);
+
+            var root = await methodSyntaxNode.SyntaxTree.GetRootAsync(cancellationToken);
             var doc = solution.GetDocument(root.SyntaxTree);
             var semanticModel = doc != null ? await doc.GetSemanticModelAsync(cancellationToken) : null;
 
@@ -831,7 +836,7 @@ namespace Discernment
             var returnExpressions = new List<ExpressionSyntax>();
 
             // Find all return statements
-            var returnStatements = methodDeclaration.DescendantNodes().OfType<ReturnStatementSyntax>();
+            var returnStatements = methodSyntaxNode.DescendantNodes().OfType<ReturnStatementSyntax>();
             foreach (var returnStatement in returnStatements)
             {
                 if (returnStatement.Expression != null)
@@ -841,9 +846,15 @@ namespace Discernment
             }
 
             // Also check for expression-bodied methods (e.g., => Width * Height)
-            if (methodDeclaration.ExpressionBody?.Expression != null)
+            if (methodDeclaration != null && methodDeclaration.ExpressionBody?.Expression != null)
             {
                 returnExpressions.Add(methodDeclaration.ExpressionBody.Expression);
+            }
+
+            // Support for local functions with expression bodies (C# 7+)
+            if (localFunction != null && localFunction.ExpressionBody?.Expression != null)
+            {
+                returnExpressions.Add(localFunction.ExpressionBody.Expression);
             }
 
             // Extract contributors from all return expressions
@@ -892,18 +903,18 @@ namespace Discernment
             }
 
             // For void methods, also trace method calls in the method body that could affect parameters
-            if (!returnExpressions.Any())
-            {
-                var methodInvocations = methodDeclaration.DescendantNodes().OfType<InvocationExpressionSyntax>();
-                foreach (var invocation in methodInvocations)
-                {
-                    var invokedMethod = semanticModel.GetSymbolInfo(invocation, cancellationToken).Symbol as IMethodSymbol;
-                    if (invokedMethod != null && IsAnalyzableSymbol(invokedMethod))
-                    {
-                        returnContributors.Add(invokedMethod);
-                    }
-                }
-            }
+            // if (!returnExpressions.Any())
+            // {
+            //     var methodInvocations = methodDeclaration.DescendantNodes().OfType<InvocationExpressionSyntax>();
+            //     foreach (var invocation in methodInvocations)
+            //     {
+            //         var invokedMethod = semanticModel.GetSymbolInfo(invocation, cancellationToken).Symbol as IMethodSymbol;
+            //         if (invokedMethod != null && IsAnalyzableSymbol(invokedMethod))
+            //         {
+            //             returnContributors.Add(invokedMethod);
+            //         }
+            //     }
+            // }
 
             // Create edges only for symbols that contribute to the return value
             foreach (var contributor in returnContributors)

@@ -300,13 +300,15 @@ namespace Sample
             var r = new List<string>();
             r.AddRange(list);
 
-            void Append(IList<string> l, int count)
+
+        }
+
+        static void Append(IList<string> l, int count)
+        {
+            for (int i = 0; i < count; i++)
             {
-                for (int i = 0; i < count; i++)
-                {
-                    l.Add(i.ToString());
-                    SomeOtherGlobalVariable++;
-                }
+                l.Add(i.ToString());
+                SomeOtherGlobalVariable++;
             }
         }
 
