@@ -33,18 +33,18 @@ namespace Discernment
             _solution = document.Project.Solution;
             var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
             var root = await document.GetSyntaxRootAsync(cancellationToken);
-            
+
             if (semanticModel == null || root == null)
                 return null;
 
             // Find the symbol at the cursor position
             var token = root.FindToken(position);
             var node = token.Parent;
-            
+
             if (node == null)
                 return null;
 
-            var symbol = semanticModel.GetSymbolInfo(node, cancellationToken).Symbol 
+            var symbol = semanticModel.GetSymbolInfo(node, cancellationToken).Symbol
                 ?? semanticModel.GetDeclaredSymbol(node, cancellationToken);
 
             if (symbol == null)
@@ -82,8 +82,6 @@ namespace Discernment
             VariableInsightGraph graph,
             CancellationToken cancellationToken)
         {
-            Console.WriteLine($"Debug: TraceMethodCallsOnSymbolAsync called for symbol {symbol.Name}");
-            
             // Find all references to this symbol in the solution
             var references = await SymbolFinder.FindReferencesAsync(symbol, solution, cancellationToken);
 
@@ -99,7 +97,7 @@ namespace Discernment
                     if (semanticModel == null || root == null) continue;
 
                     var node = root.FindNode(location.Location.SourceSpan);
-                    
+
                     // Check if this is a method call on the symbol (e.g., r.AddRange(list))
                     if (node.Parent is MemberAccessExpressionSyntax memberAccess &&
                         memberAccess.Expression == node &&
@@ -115,7 +113,7 @@ namespace Discernment
                                 _symbolToNodeMap[methodSymbol] = methodNode;
                                 graph.AllNodes.Add(methodNode);
                             }
-                            
+
                             // Create edge from root to method
                             var edge = new InsightEdge
                             {
@@ -124,31 +122,23 @@ namespace Discernment
                                 SourceLocation = GetLocationString(location.Location)
                             };
                             rootNode.Edges.Add(edge);
-                            
+
                             // For external APIs (methods without source), treat all parameters as affectants
                             if (methodSymbol.DeclaringSyntaxReferences.IsEmpty)
                             {
-                                Console.WriteLine($"Debug: Found external method {methodSymbol.Name}, tracing parameters...");
                                 await TraceExternalMethodParametersAsync(solution, methodSymbol, invocation, methodNode, graph, cancellationToken);
-                            }
-                            else
-                            {
-                                Console.WriteLine($"Debug: Method {methodSymbol.Name} has source code, not treating as external");
                             }
                         }
                     }
-                    
+
                     // Check if this symbol is used as an argument in a method call (e.g., Append(list, 5))
                     if (node.Parent is ArgumentSyntax argument &&
                         argument.Parent is ArgumentListSyntax argumentList &&
                         argumentList.Parent is InvocationExpressionSyntax invocationWithArg)
                     {
-                        Console.WriteLine($"Debug: Found argument usage of {symbol.Name} in method call");
                         var methodSymbol = semanticModel.GetSymbolInfo(invocationWithArg, cancellationToken).Symbol as IMethodSymbol;
                         if (methodSymbol != null)
                         {
-                            Console.WriteLine($"Debug: Method {methodSymbol.Name} found for argument {symbol.Name}");
-                            
                             // Create node for the method
                             if (!_symbolToNodeMap.TryGetValue(methodSymbol, out var methodNode))
                             {
@@ -156,7 +146,7 @@ namespace Discernment
                                 _symbolToNodeMap[methodSymbol] = methodNode;
                                 graph.AllNodes.Add(methodNode);
                             }
-                            
+
                             // Create edge from symbol to method (the symbol is used by this method)
                             var edge = new InsightEdge
                             {
@@ -165,7 +155,7 @@ namespace Discernment
                                 SourceLocation = GetLocationString(location.Location)
                             };
                             rootNode.Edges.Add(edge);
-                            
+
                             // For methods with source code, trace their dependencies
                             if (!methodSymbol.DeclaringSyntaxReferences.IsEmpty)
                             {
@@ -879,7 +869,7 @@ namespace Discernment
                     {
                         returnContributors.Add(memberSymbol);
                     }
-                    
+
                     // Add the object being accessed (e.g., p1 parameter)
                     var objectSymbol = semanticModel.GetSymbolInfo(memberAccess.Expression, cancellationToken).Symbol;
                     if (objectSymbol != null && IsAnalyzableSymbol(objectSymbol))
@@ -894,6 +884,20 @@ namespace Discernment
                 {
                     var invokedMethod = semanticModel.GetSymbolInfo(inv, cancellationToken).Symbol as IMethodSymbol;
                     if (invokedMethod != null)
+                    {
+                        returnContributors.Add(invokedMethod);
+                    }
+                }
+            }
+
+            // For void methods, also trace method calls in the method body that could affect parameters
+            if (!returnExpressions.Any())
+            {
+                var methodInvocations = methodDeclaration.DescendantNodes().OfType<InvocationExpressionSyntax>();
+                foreach (var invocation in methodInvocations)
+                {
+                    var invokedMethod = semanticModel.GetSymbolInfo(invocation, cancellationToken).Symbol as IMethodSymbol;
+                    if (invokedMethod != null && IsAnalyzableSymbol(invokedMethod))
                     {
                         returnContributors.Add(invokedMethod);
                     }
@@ -1293,44 +1297,29 @@ namespace Discernment
         {
             // For external APIs, treat all parameters as affectants
             var arguments = invocation.ArgumentList.Arguments;
-            
-            Console.WriteLine($"Debug: Method {methodSymbol.Name} has {arguments.Count} arguments");
-            
+
             // Get the semantic model from the document containing the invocation
             var document = solution.GetDocument(invocation.SyntaxTree);
-            if (document == null) 
-            {
-                Console.WriteLine("Debug: No document found");
-                return;
-            }
-            
+            if (document == null) return;
+
             var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
-            if (semanticModel == null) 
-            {
-                Console.WriteLine("Debug: No semantic model found");
-                return;
-            }
-            
+            if (semanticModel == null) return;
+
             for (int i = 0; i < arguments.Count && i < methodSymbol.Parameters.Length; i++)
             {
                 var argument = arguments[i];
                 var parameter = methodSymbol.Parameters[i];
-                
-                Console.WriteLine($"Debug: Processing argument {i}: {argument.Expression} (type: {argument.Expression.GetType().Name})");
-                
+
                 // Extract the symbol from the argument using the semantic model
                 ISymbol? argumentSymbol = null;
-                
+
                 if (argument.Expression is IdentifierNameSyntax identifier)
                 {
                     argumentSymbol = semanticModel.GetSymbolInfo(identifier, cancellationToken).Symbol;
-                    Console.WriteLine($"Debug: Found identifier {identifier.Identifier.ValueText}, symbol: {argumentSymbol?.Name} ({argumentSymbol?.GetType().Name})");
                 }
-                
+
                 if (argumentSymbol != null && IsAnalyzableSymbol(argumentSymbol))
                 {
-                    Console.WriteLine($"Debug: Creating edge from {methodSymbol.Name} to {argumentSymbol.Name}");
-                    
                     // Create node for the argument
                     if (!_symbolToNodeMap.TryGetValue(argumentSymbol, out var argNode))
                     {
@@ -1338,7 +1327,7 @@ namespace Discernment
                         _symbolToNodeMap[argumentSymbol] = argNode;
                         graph.AllNodes.Add(argNode);
                     }
-                    
+
                     // Create edge from method to argument
                     var edge = new InsightEdge
                     {
@@ -1347,7 +1336,7 @@ namespace Discernment
                         SourceLocation = GetLocationString(argument.GetLocation())
                     };
                     methodNode.Edges.Add(edge);
-                    
+
                     // Trace all usages of this argument (method calls, parameter uses, etc.)
                     await TraceDataFlowBackwardAsync(
                         solution,
@@ -1356,10 +1345,6 @@ namespace Discernment
                         graph,
                         1,
                         cancellationToken);
-                }
-                else
-                {
-                    Console.WriteLine($"Debug: Argument symbol is null or not analyzable: {argumentSymbol?.Name}");
                 }
             }
         }
