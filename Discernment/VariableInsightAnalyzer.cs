@@ -13,7 +13,7 @@ namespace Discernment
 {
     /// <summary>
     /// Analyzes C# code to build variable insight graphs using Roslyn.
-    /// Traces backward through data flow to find all variables that contribute to a target variable.
+    /// Traces backward through data flow to find all "affectants" of a selected "concerned variable".
     /// </summary>
     public class VariableInsightAnalyzer
     {
@@ -23,7 +23,7 @@ namespace Discernment
         private Solution? _solution;
 
         /// <summary>
-        /// Analyzes a variable or field at the given position and builds an insight graph.
+        /// Analyzes the concerned variable (local/field/property/parameter) at the given position and builds an affectant graph.
         /// </summary>
         public async Task<VariableInsightGraph?> AnalyzeAsync(
             Document document,
@@ -62,10 +62,10 @@ namespace Discernment
                 AllNodes = new HashSet<InsightNode> { rootNode }
             };
 
-            // First, find all method calls on the root variable (e.g., r.AddRange(list))
+            // First, find all direct usages: method calls on the concerned variable (e.g., r.AddRange(list))
             await TraceMethodCallsOnSymbolAsync(_solution, symbol, rootNode, graph, cancellationToken);
 
-            // Then trace backward from assignments to the root
+            // Then trace backward from assignments/usages to the concerned variable
             await TraceDataFlowBackwardAsync(_solution, symbol, rootNode, graph, 0, cancellationToken);
 
             graph.TotalReferences = graph.AllNodes.Count - 1; // Don't count the root
@@ -73,7 +73,7 @@ namespace Discernment
         }
 
         /// <summary>
-        /// Traces method calls on the root symbol (e.g., r.AddRange(list))
+        /// Traces direct usages (method calls) on the concerned symbol (e.g., r.AddRange(list))
         /// </summary>
         private async Task TraceMethodCallsOnSymbolAsync(
             Solution solution,
@@ -119,11 +119,11 @@ namespace Discernment
                                 graph.AllNodes.Add(methodNode);
                             }
 
-                            // Create edge from root to method
+                            // Create edge from concerned variable to method (Direct Usage)
                             var edge = new InsightEdge
                             {
                                 Target = methodNode,
-                                RelationKind = "Method Call",
+                                RelationKind = "Direct Usage",
                                 SourceLocation = GetLocationString(location.Location)
                             };
                             rootNode.Edges.Add(edge);
@@ -159,11 +159,11 @@ namespace Discernment
                                 graph.AllNodes.Add(methodNode);
                             }
 
-                            // Create edge from symbol to method (the symbol is used by this method)
+                            // Create edge from symbol to method (Direct Usage at callsite)
                             var edge = new InsightEdge
                             {
                                 Target = methodNode,
-                                RelationKind = "Argument",
+                                RelationKind = "Direct Usage",
                                 SourceLocation = GetLocationString(location.Location)
                             };
                             rootNode.Edges.Add(edge);
@@ -318,7 +318,7 @@ namespace Discernment
                                     var edge = new InsightEdge
                                     {
                                         Target = valueNode,
-                                        RelationKind = "Object Initializer",
+                                        RelationKind = "Inline Assignment",
                                         SourceLocation = symbol.Locations.FirstOrDefault() != null
                                             ? GetLocationString(symbol.Locations.First())
                                             : "Unknown"
@@ -348,7 +348,7 @@ namespace Discernment
                                     var edge = new InsightEdge
                                     {
                                         Target = objectNode,
-                                        RelationKind = "Object Initializer",
+                                        RelationKind = "Inline Assignment",
                                         SourceLocation = objectSymbol.Locations.FirstOrDefault() != null
                                             ? GetLocationString(objectSymbol.Locations.First())
                                             : "Unknown"
@@ -793,11 +793,11 @@ namespace Discernment
 
                 if (existingEdge == null)
                 {
-                    // Create edge from parameter to argument
+                    // Create edge from parameter to argument (Callsite Mapping)
                     var edge = new InsightEdge
                     {
                         Target = argumentNode,
-                        RelationKind = "Parameter Mapping",
+                        RelationKind = "Callsite Mapping",
                         SourceLocation = invocation.GetLocation() != null
                             ? GetLocationString(invocation.GetLocation())
                             : "Unknown"
@@ -997,7 +997,7 @@ namespace Discernment
                     var edge = new InsightEdge
                     {
                         Target = contributorNode,
-                        RelationKind = "Return Contributor",
+                        RelationKind = "Return Affectant",
                         SourceLocation = methodSymbol.Locations.FirstOrDefault() != null 
                             ? GetLocationString(methodSymbol.Locations.First()) 
                             : "Unknown"
