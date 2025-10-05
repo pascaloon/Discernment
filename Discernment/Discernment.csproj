@@ -9,6 +9,12 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.14.0" />
     <PackageReference Include="Microsoft.VisualStudio.Extensibility.Sdk" Version="17.9.2092" PrivateAssets="all" />
     <PackageReference Include="Microsoft.VisualStudio.Extensibility.Build" Version="17.9.2092" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.ServiceHub.Framework" Version="4.4.22" />
+    <PackageReference Include="StreamJsonRpc" Version="2.17.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Discernment.Contracts\Discernment.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>
