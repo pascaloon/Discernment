@@ -754,6 +754,25 @@ namespace Discernment
                     }
                 }
 
+                // Handle member access expressions (e.g., p1.NumWheels, obj.Property)
+                var memberAccesses = returnExpression.DescendantNodesAndSelf().OfType<MemberAccessExpressionSyntax>();
+                foreach (var memberAccess in memberAccesses)
+                {
+                    // Add the member being accessed (e.g., NumWheels property)
+                    var memberSymbol = semanticModel.GetSymbolInfo(memberAccess.Name, cancellationToken).Symbol;
+                    if (memberSymbol != null && IsAnalyzableSymbol(memberSymbol))
+                    {
+                        returnContributors.Add(memberSymbol);
+                    }
+                    
+                    // Add the object being accessed (e.g., p1 parameter)
+                    var objectSymbol = semanticModel.GetSymbolInfo(memberAccess.Expression, cancellationToken).Symbol;
+                    if (objectSymbol != null && IsAnalyzableSymbol(objectSymbol))
+                    {
+                        returnContributors.Add(objectSymbol);
+                    }
+                }
+
                 // Handle method calls in return expressions
                 var invocations = returnExpression.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>();
                 foreach (var inv in invocations)
