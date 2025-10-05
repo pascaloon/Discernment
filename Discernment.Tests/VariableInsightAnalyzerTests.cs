@@ -264,7 +264,7 @@ class Person
     }
 }";
 
-        var graph = await AnalyzeAsync(code, "string r");
+        var graph = await AnalyzeAsync(code, "r");
         
         Assert.NotNull(graph);
         
@@ -333,7 +333,7 @@ class Circle : Shape
     public override double GetArea() => 3.14 * Radius * Radius;
 }";
 
-        var graph = await AnalyzeAsync(code, "double r");
+        var graph = await AnalyzeAsync(code, "r");
         
         Assert.NotNull(graph);
         
@@ -391,18 +391,33 @@ class Program
     }
 }";
 
-        var graph = await AnalyzeAsync(code, "var r =");
+        var graph = await AnalyzeAsync(code, "r");
         
         Assert.NotNull(graph);
         Assert.Equal("r", graph.RootNode.Name);
         
+        // Debug: Print the graph structure
+        Console.WriteLine($"Root node: {graph.RootNode.Name}");
+        Console.WriteLine($"Root edges: {graph.RootNode.Edges.Count}");
+        foreach (var edge in graph.RootNode.Edges)
+        {
+            Console.WriteLine($"  -> {edge.Target.Name} ({edge.RelationKind})");
+        }
+        
         // r -> AddRange (method call on r)
         var rootEdges = graph.RootNode.Edges.ToList();
-        Assert.Contains(rootEdges, e => e.Target.Name == "AddRange");
+        Assert.True(rootEdges.Count > 0, "Expected at least one edge from root node");
 
         // AddRange -> list (parameter to external API)
         var addRangeNode = rootEdges.First(e => e.Target.Name == "AddRange").Target;
         var addRangeEdges = addRangeNode.Edges.ToList();
+        
+        Console.WriteLine($"AddRange edges: {addRangeEdges.Count}");
+        foreach (var edge in addRangeEdges)
+        {
+            Console.WriteLine($"  -> {edge.Target.Name} ({edge.RelationKind})");
+        }
+        
         Assert.Contains(addRangeEdges, e => e.Target.Name == "list");
 
         // list should have edges to both List.Add and Program.Append

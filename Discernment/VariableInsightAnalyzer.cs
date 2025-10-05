@@ -62,10 +62,119 @@ namespace Discernment
                 AllNodes = new HashSet<InsightNode> { rootNode }
             };
 
+            // First, find all method calls on the root variable (e.g., r.AddRange(list))
+            await TraceMethodCallsOnSymbolAsync(_solution, symbol, rootNode, graph, cancellationToken);
+
+            // Then trace backward from assignments to the root
             await TraceDataFlowBackwardAsync(_solution, symbol, rootNode, graph, 0, cancellationToken);
 
             graph.TotalReferences = graph.AllNodes.Count - 1; // Don't count the root
             return graph;
+        }
+
+        /// <summary>
+        /// Traces method calls on the root symbol (e.g., r.AddRange(list))
+        /// </summary>
+        private async Task TraceMethodCallsOnSymbolAsync(
+            Solution solution,
+            ISymbol symbol,
+            InsightNode rootNode,
+            VariableInsightGraph graph,
+            CancellationToken cancellationToken)
+        {
+            Console.WriteLine($"Debug: TraceMethodCallsOnSymbolAsync called for symbol {symbol.Name}");
+            
+            // Find all references to this symbol in the solution
+            var references = await SymbolFinder.FindReferencesAsync(symbol, solution, cancellationToken);
+
+            foreach (var reference in references)
+            {
+                foreach (var location in reference.Locations)
+                {
+                    var document = solution.GetDocument(location.Document.Id);
+                    if (document == null) continue;
+
+                    var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
+                    var root = await document.GetSyntaxRootAsync(cancellationToken);
+                    if (semanticModel == null || root == null) continue;
+
+                    var node = root.FindNode(location.Location.SourceSpan);
+                    
+                    // Check if this is a method call on the symbol (e.g., r.AddRange(list))
+                    if (node.Parent is MemberAccessExpressionSyntax memberAccess &&
+                        memberAccess.Expression == node &&
+                        memberAccess.Parent is InvocationExpressionSyntax invocation)
+                    {
+                        var methodSymbol = semanticModel.GetSymbolInfo(invocation, cancellationToken).Symbol as IMethodSymbol;
+                        if (methodSymbol != null)
+                        {
+                            // Create node for the method
+                            if (!_symbolToNodeMap.TryGetValue(methodSymbol, out var methodNode))
+                            {
+                                methodNode = CreateNode(methodSymbol);
+                                _symbolToNodeMap[methodSymbol] = methodNode;
+                                graph.AllNodes.Add(methodNode);
+                            }
+                            
+                            // Create edge from root to method
+                            var edge = new InsightEdge
+                            {
+                                Target = methodNode,
+                                RelationKind = "Method Call",
+                                SourceLocation = GetLocationString(location.Location)
+                            };
+                            rootNode.Edges.Add(edge);
+                            
+                            // For external APIs (methods without source), treat all parameters as affectants
+                            if (methodSymbol.DeclaringSyntaxReferences.IsEmpty)
+                            {
+                                Console.WriteLine($"Debug: Found external method {methodSymbol.Name}, tracing parameters...");
+                                await TraceExternalMethodParametersAsync(solution, methodSymbol, invocation, methodNode, graph, cancellationToken);
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Debug: Method {methodSymbol.Name} has source code, not treating as external");
+                            }
+                        }
+                    }
+                    
+                    // Check if this symbol is used as an argument in a method call (e.g., Append(list, 5))
+                    if (node.Parent is ArgumentSyntax argument &&
+                        argument.Parent is ArgumentListSyntax argumentList &&
+                        argumentList.Parent is InvocationExpressionSyntax invocationWithArg)
+                    {
+                        Console.WriteLine($"Debug: Found argument usage of {symbol.Name} in method call");
+                        var methodSymbol = semanticModel.GetSymbolInfo(invocationWithArg, cancellationToken).Symbol as IMethodSymbol;
+                        if (methodSymbol != null)
+                        {
+                            Console.WriteLine($"Debug: Method {methodSymbol.Name} found for argument {symbol.Name}");
+                            
+                            // Create node for the method
+                            if (!_symbolToNodeMap.TryGetValue(methodSymbol, out var methodNode))
+                            {
+                                methodNode = CreateNode(methodSymbol);
+                                _symbolToNodeMap[methodSymbol] = methodNode;
+                                graph.AllNodes.Add(methodNode);
+                            }
+                            
+                            // Create edge from symbol to method (the symbol is used by this method)
+                            var edge = new InsightEdge
+                            {
+                                Target = methodNode,
+                                RelationKind = "Argument",
+                                SourceLocation = GetLocationString(location.Location)
+                            };
+                            rootNode.Edges.Add(edge);
+                            
+                            // For methods with source code, trace their dependencies
+                            if (!methodSymbol.DeclaringSyntaxReferences.IsEmpty)
+                            {
+                                await TraceMethodReturnDependenciesAsync(solution, methodSymbol, methodNode, graph, 0, cancellationToken);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         /// <summary>
@@ -82,6 +191,12 @@ namespace Discernment
             // Limit recursion depth to prevent infinite loops
             if (depth > 15 || !_visitedSymbols.Add(symbol))
                 return;
+
+            // For non-root symbols (depth > 0), also trace method calls on the symbol
+            if (depth > 0)
+            {
+                await TraceMethodCallsOnSymbolAsync(solution, symbol, currentNode, graph, cancellationToken);
+            }
 
             // Special handling for method symbols - only trace return-affecting symbols
             if (symbol is IMethodSymbol methodSymbol)
@@ -1146,6 +1261,107 @@ namespace Discernment
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Extracts a symbol from an expression (simplified version for single symbol extraction).
+        /// </summary>
+        private ISymbol? ExtractSymbolFromExpression(ExpressionSyntax expression, Solution solution)
+        {
+            // For simple identifier expressions (e.g., 'list', 'count')
+            if (expression is IdentifierNameSyntax identifier)
+            {
+                // We need a semantic model to resolve the symbol, but we don't have one here
+                // For now, return null and handle this differently
+                return null;
+            }
+            
+            return null;
+        }
+
+        /// <summary>
+        /// Traces parameters of external methods (methods without source code).
+        /// For external APIs, treats all parameters as affectants.
+        /// </summary>
+        private async Task TraceExternalMethodParametersAsync(
+            Solution solution,
+            IMethodSymbol methodSymbol,
+            InvocationExpressionSyntax invocation,
+            InsightNode methodNode,
+            VariableInsightGraph graph,
+            CancellationToken cancellationToken)
+        {
+            // For external APIs, treat all parameters as affectants
+            var arguments = invocation.ArgumentList.Arguments;
+            
+            Console.WriteLine($"Debug: Method {methodSymbol.Name} has {arguments.Count} arguments");
+            
+            // Get the semantic model from the document containing the invocation
+            var document = solution.GetDocument(invocation.SyntaxTree);
+            if (document == null) 
+            {
+                Console.WriteLine("Debug: No document found");
+                return;
+            }
+            
+            var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
+            if (semanticModel == null) 
+            {
+                Console.WriteLine("Debug: No semantic model found");
+                return;
+            }
+            
+            for (int i = 0; i < arguments.Count && i < methodSymbol.Parameters.Length; i++)
+            {
+                var argument = arguments[i];
+                var parameter = methodSymbol.Parameters[i];
+                
+                Console.WriteLine($"Debug: Processing argument {i}: {argument.Expression} (type: {argument.Expression.GetType().Name})");
+                
+                // Extract the symbol from the argument using the semantic model
+                ISymbol? argumentSymbol = null;
+                
+                if (argument.Expression is IdentifierNameSyntax identifier)
+                {
+                    argumentSymbol = semanticModel.GetSymbolInfo(identifier, cancellationToken).Symbol;
+                    Console.WriteLine($"Debug: Found identifier {identifier.Identifier.ValueText}, symbol: {argumentSymbol?.Name} ({argumentSymbol?.GetType().Name})");
+                }
+                
+                if (argumentSymbol != null && IsAnalyzableSymbol(argumentSymbol))
+                {
+                    Console.WriteLine($"Debug: Creating edge from {methodSymbol.Name} to {argumentSymbol.Name}");
+                    
+                    // Create node for the argument
+                    if (!_symbolToNodeMap.TryGetValue(argumentSymbol, out var argNode))
+                    {
+                        argNode = CreateNode(argumentSymbol);
+                        _symbolToNodeMap[argumentSymbol] = argNode;
+                        graph.AllNodes.Add(argNode);
+                    }
+                    
+                    // Create edge from method to argument
+                    var edge = new InsightEdge
+                    {
+                        Target = argNode,
+                        RelationKind = "Parameter",
+                        SourceLocation = GetLocationString(argument.GetLocation())
+                    };
+                    methodNode.Edges.Add(edge);
+                    
+                    // Trace all usages of this argument (method calls, parameter uses, etc.)
+                    await TraceDataFlowBackwardAsync(
+                        solution,
+                        argumentSymbol,
+                        argNode,
+                        graph,
+                        1,
+                        cancellationToken);
+                }
+                else
+                {
+                    Console.WriteLine($"Debug: Argument symbol is null or not analyzable: {argumentSymbol?.Name}");
+                }
+            }
         }
 
         private string GetAssignmentKind(SyntaxNode node)
