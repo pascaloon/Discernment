@@ -5,7 +5,7 @@ namespace Discernment
     /// <summary>
     /// Represents a node in the variable insight graph.
     /// </summary>
-    internal class InsightNode
+    public class InsightNode
     {
         public string Id { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
@@ -23,7 +23,7 @@ namespace Discernment
     /// <summary>
     /// Represents an edge in the variable insight graph showing how one element affects another.
     /// </summary>
-    internal class InsightEdge
+    public class InsightEdge
     {
         public InsightNode Target { get; set; } = null!;
         public string RelationKind { get; set; } = string.Empty;
@@ -33,7 +33,7 @@ namespace Discernment
     /// <summary>
     /// The kind of node in the insight graph.
     /// </summary>
-    internal enum InsightNodeKind
+    public enum InsightNodeKind
     {
         Variable,
         Parameter,
@@ -46,7 +46,7 @@ namespace Discernment
     /// <summary>
     /// Represents the complete variable insight graph.
     /// </summary>
-    internal class VariableInsightGraph
+    public class VariableInsightGraph
     {
         public InsightNode RootNode { get; set; } = null!;
         public HashSet<InsightNode> AllNodes { get; set; } = new();

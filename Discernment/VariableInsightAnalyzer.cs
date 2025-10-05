@@ -15,7 +15,7 @@ namespace Discernment
     /// Analyzes C# code to build variable insight graphs using Roslyn.
     /// Traces backward through data flow to find all variables that contribute to a target variable.
     /// </summary>
-    internal class VariableInsightAnalyzer
+    public class VariableInsightAnalyzer
     {
         private readonly HashSet<ISymbol> _visitedSymbols = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<ISymbol, InsightNode> _symbolToNodeMap = new(SymbolEqualityComparer.Default);

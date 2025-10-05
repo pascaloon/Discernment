@@ -289,6 +289,27 @@ namespace Sample
             Console.WriteLine($"Result r: {r}\n");
         }
 
+        static int SomeOtherGlobalVariable = 0;
+
+        static void Collections()
+        {
+
+            var list = new List<string>();
+            Append(list, 5);
+            list.Add("Hello");
+            var r = new List<string>();
+            r.AddRange(list);
+
+            void Append(IList<string> l, int count)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    l.Add(i.ToString());
+                    SomeOtherGlobalVariable++;
+                }
+            }
+        }
+
         // ==================== Helper Classes ====================
 
         /// <summary>

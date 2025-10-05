@@ -167,3 +167,43 @@ Height -> s // inline declaration
 Circle.GetArea() -> Radius
 
 ```
+
+## Example 5: Consider all the root references
+
+Here, if the root is `r`, you must consider all the references of `r` to find all the affectants. Here's a complex example:
+
+```cs
+var list = new List<string>();
+Append(list, 5);
+list.Add("Hello");
+var r = new List<string>();
+r.AddRange(list);
+
+void Append(IList<string> l, int count)
+{
+    for (int i = 0; i < count; i++)
+    {
+        l.Add(i.ToString());
+        SomeGlobalVariable++;
+    }
+}
+```
+
+Here's the expected graph when running Variable insight on any location of the symbol `r` :
+
+```
+r (root) -> List.AddRange
+List.AddRange -> list // We don't have the definition of the method AddRange so we consider all parameters affectants, here that means list is considered affectants. If we do have the definition sources for the method, we would do like the previous 
+List.AddRange -> r
+
+list -> List.Add // `list.Add("Hello");`
+list -> Program.Append
+
+Program.Append -> Add
+List.Add -> i // we don't have the sources for Add, we consider the parameters affectant again.
+List.Add -> l // same here
+
+i -> count // when we see i refered in if/for/foreach/while we consider the other symbols a affectant. count in this case.
+
+l -> list // callsite mapping
+```
