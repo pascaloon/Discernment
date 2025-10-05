@@ -106,6 +106,11 @@ namespace Discernment
                         var methodSymbol = semanticModel.GetSymbolInfo(invocation, cancellationToken).Symbol as IMethodSymbol;
                         if (methodSymbol != null)
                         {
+                        // Record invocation for parameter mapping from parameters to callsite arguments
+                        if (!_methodInvocations.ContainsKey(methodSymbol))
+                        {
+                            _methodInvocations[methodSymbol] = invocation;
+                        }
                             // Create node for the method
                             if (!_symbolToNodeMap.TryGetValue(methodSymbol, out var methodNode))
                             {
@@ -140,6 +145,12 @@ namespace Discernment
                         var methodSymbol = semanticModel.GetSymbolInfo(invocationWithArg, cancellationToken).Symbol as IMethodSymbol;
                         if (methodSymbol != null)
                         {
+                            // Record invocation for parameter mapping of this method
+                            if (!_methodInvocations.ContainsKey(methodSymbol))
+                            {
+                                _methodInvocations[methodSymbol] = invocationWithArg;
+                            }
+
                             // Create node for the method
                             if (!_symbolToNodeMap.TryGetValue(methodSymbol, out var methodNode))
                             {
@@ -216,7 +227,7 @@ namespace Discernment
             }
 
             // Special handling for parameter symbols - map to call site arguments
-            if (symbol is IParameterSymbol parameter)
+                if (symbol is IParameterSymbol parameter)
             {
                 await TraceParameterToArgumentAsync(
                     solution,
@@ -412,6 +423,12 @@ namespace Discernment
                             cancellationToken);
                     }
                 }
+            }
+
+            // If symbol is a local variable used in loop constructs, trace loop boundary affectants
+            if (symbol is ILocalSymbol)
+            {
+                await TraceLoopBoundaryAffectantsAsync(solution, symbol, currentNode, graph, depth, cancellationToken);
             }
         }
 
@@ -881,13 +898,9 @@ namespace Discernment
                     {
                         returnContributors.Add(memberSymbol);
                     }
-
-                    // Add the object being accessed (e.g., p1 parameter)
-                    var objectSymbol = semanticModel.GetSymbolInfo(memberAccess.Expression, cancellationToken).Symbol;
-                    if (objectSymbol != null && IsAnalyzableSymbol(objectSymbol))
-                    {
-                        returnContributors.Add(objectSymbol);
-                    }
+                    // IMPORTANT: Do NOT add the object being accessed (e.g., p1) as a contributor.
+                    // Per AlgoRevampRules.md and GraphResultsExamples, only the member affects the return,
+                    // not the object parameter itself.
                 }
 
                 // Handle method calls in return expressions
@@ -902,19 +915,65 @@ namespace Discernment
                 }
             }
 
-            // For void methods, also trace method calls in the method body that could affect parameters
-            // if (!returnExpressions.Any())
-            // {
-            //     var methodInvocations = methodDeclaration.DescendantNodes().OfType<InvocationExpressionSyntax>();
-            //     foreach (var invocation in methodInvocations)
-            //     {
-            //         var invokedMethod = semanticModel.GetSymbolInfo(invocation, cancellationToken).Symbol as IMethodSymbol;
-            //         if (invokedMethod != null && IsAnalyzableSymbol(invokedMethod))
-            //         {
-            //             returnContributors.Add(invokedMethod);
-            //         }
-            //     }
-            // }
+            // For void methods (no returns), trace method calls in the method body
+            if (!returnExpressions.Any())
+            {
+                var bodyInvocations = methodSyntaxNode.DescendantNodes().OfType<InvocationExpressionSyntax>();
+                foreach (var invocation in bodyInvocations)
+                {
+                    var invokedMethod = semanticModel.GetSymbolInfo(invocation, cancellationToken).Symbol as IMethodSymbol;
+                    if (invokedMethod == null)
+                        continue;
+
+                    // Create/add node for the invoked method and edge from methodNode -> invoked method
+                    if (!_symbolToNodeMap.TryGetValue(invokedMethod, out var invokedMethodNode))
+                    {
+                        invokedMethodNode = CreateNode(invokedMethod);
+                        _symbolToNodeMap[invokedMethod] = invokedMethodNode;
+                        graph.AllNodes.Add(invokedMethodNode);
+                    }
+
+                    var existingEdge = methodNode.Edges.FirstOrDefault(e => e.Target == invokedMethodNode);
+                    if (existingEdge == null)
+                    {
+                        var edge = new InsightEdge
+                        {
+                            Target = invokedMethodNode,
+                            RelationKind = "Body Invocation",
+                            SourceLocation = invocation.GetLocation() != null
+                                ? GetLocationString(invocation.GetLocation())
+                                : "Unknown"
+                        };
+                        methodNode.Edges.Add(edge);
+                    }
+
+                    // Remember invocation for parameter-to-argument mapping
+                    _methodInvocations[invokedMethod] = invocation;
+
+                    // If method has no source (external), treat its parameters (including implicit this) as affectants
+                    if (invokedMethod.DeclaringSyntaxReferences.IsEmpty)
+                    {
+                        await TraceExternalMethodParametersAsync(
+                            solution,
+                            invokedMethod,
+                            invocation,
+                            invokedMethodNode,
+                            graph,
+                            cancellationToken);
+                    }
+                    else
+                    {
+                        // Recursively trace return dependencies of invoked method
+                        await TraceMethodReturnDependenciesAsync(
+                            solution,
+                            invokedMethod,
+                            invokedMethodNode,
+                            graph,
+                            depth + 1,
+                            cancellationToken);
+                    }
+                }
+            }
 
             // Create edges only for symbols that contribute to the return value
             foreach (var contributor in returnContributors)
@@ -1317,46 +1376,154 @@ namespace Discernment
             var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
             if (semanticModel == null) return;
 
+            // Include implicit 'this' for instance methods
+            if (!methodSymbol.IsStatic && invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+            {
+                var instanceSymbol = semanticModel.GetSymbolInfo(memberAccess.Expression, cancellationToken).Symbol;
+                if (instanceSymbol != null && IsAnalyzableSymbol(instanceSymbol))
+                {
+                    if (!_symbolToNodeMap.TryGetValue(instanceSymbol, out var thisNode))
+                    {
+                        thisNode = CreateNode(instanceSymbol);
+                        _symbolToNodeMap[instanceSymbol] = thisNode;
+                        graph.AllNodes.Add(thisNode);
+                    }
+
+                    var edgeThis = new InsightEdge
+                    {
+                        Target = thisNode,
+                        RelationKind = "Parameter",
+                        SourceLocation = GetLocationString(memberAccess.Expression.GetLocation())
+                    };
+                    methodNode.Edges.Add(edgeThis);
+
+                    // Continue tracing from the instance object as it may have own affectants
+                    await TraceDataFlowBackwardAsync(
+                        solution,
+                        instanceSymbol,
+                        thisNode,
+                        graph,
+                        1,
+                        cancellationToken);
+                }
+            }
+
             for (int i = 0; i < arguments.Count && i < methodSymbol.Parameters.Length; i++)
             {
                 var argument = arguments[i];
                 var parameter = methodSymbol.Parameters[i];
 
                 // Extract the symbol from the argument using the semantic model
-                ISymbol? argumentSymbol = null;
+                var argumentSymbols = new List<ISymbol>();
 
-                if (argument.Expression is IdentifierNameSyntax identifier)
+                // Prefer direct identifier, else walk identifiers inside the expression
+                if (argument.Expression is IdentifierNameSyntax id)
                 {
-                    argumentSymbol = semanticModel.GetSymbolInfo(identifier, cancellationToken).Symbol;
+                    var sym = semanticModel.GetSymbolInfo(id, cancellationToken).Symbol;
+                    if (sym != null) argumentSymbols.Add(sym);
+                }
+                else
+                {
+                    foreach (var innerId in argument.Expression.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>())
+                    {
+                        var sym = semanticModel.GetSymbolInfo(innerId, cancellationToken).Symbol;
+                        if (sym != null) argumentSymbols.Add(sym);
+                    }
                 }
 
-                if (argumentSymbol != null && IsAnalyzableSymbol(argumentSymbol))
+                foreach (var argumentSymbol in argumentSymbols.Distinct(SymbolEqualityComparer.Default))
                 {
-                    // Create node for the argument
-                    if (!_symbolToNodeMap.TryGetValue(argumentSymbol, out var argNode))
+                    if (argumentSymbol != null && IsAnalyzableSymbol(argumentSymbol))
                     {
-                        argNode = CreateNode(argumentSymbol);
-                        _symbolToNodeMap[argumentSymbol] = argNode;
-                        graph.AllNodes.Add(argNode);
+                        // Create node for the argument
+                        if (!_symbolToNodeMap.TryGetValue(argumentSymbol, out var argNode))
+                        {
+                            argNode = CreateNode(argumentSymbol);
+                            _symbolToNodeMap[argumentSymbol] = argNode;
+                            graph.AllNodes.Add(argNode);
+                        }
+
+                        // Create edge from method to argument
+                        var edge = new InsightEdge
+                        {
+                            Target = argNode,
+                            RelationKind = "Parameter",
+                            SourceLocation = GetLocationString(argument.GetLocation())
+                        };
+                        methodNode.Edges.Add(edge);
+
+                        // Trace all usages of this argument (method calls, parameter uses, etc.)
+                        await TraceDataFlowBackwardAsync(
+                            solution,
+                            argumentSymbol,
+                            argNode,
+                            graph,
+                            1,
+                            cancellationToken);
                     }
+                }
+            }
+        }
 
-                    // Create edge from method to argument
-                    var edge = new InsightEdge
+        private async Task TraceLoopBoundaryAffectantsAsync(
+            Solution solution,
+            ISymbol symbol,
+            InsightNode currentNode,
+            VariableInsightGraph graph,
+            int depth,
+            CancellationToken cancellationToken)
+        {
+            var references = await SymbolFinder.FindReferencesAsync(symbol, solution, cancellationToken);
+            foreach (var reference in references)
+            {
+                foreach (var location in reference.Locations)
+                {
+                    var document = solution.GetDocument(location.Document.Id);
+                    if (document == null) continue;
+
+                    var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
+                    var root = await document.GetSyntaxRootAsync(cancellationToken);
+                    if (semanticModel == null || root == null) continue;
+
+                    var node = root.FindNode(location.Location.SourceSpan);
+
+                    // Check if this usage is inside a for/while/if condition and link other identifiers
+                    var forStatement = node.AncestorsAndSelf().OfType<ForStatementSyntax>().FirstOrDefault();
+                    if (forStatement?.Condition != null && forStatement.Condition.Span.Contains(node.Span))
                     {
-                        Target = argNode,
-                        RelationKind = "Parameter",
-                        SourceLocation = GetLocationString(argument.GetLocation())
-                    };
-                    methodNode.Edges.Add(edge);
+                        foreach (var id in forStatement.Condition.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>())
+                        {
+                            var otherSymbol = semanticModel.GetSymbolInfo(id, cancellationToken).Symbol;
+                            if (otherSymbol == null || SymbolEqualityComparer.Default.Equals(otherSymbol, symbol))
+                                continue;
 
-                    // Trace all usages of this argument (method calls, parameter uses, etc.)
-                    await TraceDataFlowBackwardAsync(
-                        solution,
-                        argumentSymbol,
-                        argNode,
-                        graph,
-                        1,
-                        cancellationToken);
+                            if (!IsAnalyzableSymbol(otherSymbol))
+                                continue;
+
+                            if (!_symbolToNodeMap.TryGetValue(otherSymbol, out var otherNode))
+                            {
+                                otherNode = CreateNode(otherSymbol);
+                                _symbolToNodeMap[otherSymbol] = otherNode;
+                                graph.AllNodes.Add(otherNode);
+                            }
+
+                            var edge = new InsightEdge
+                            {
+                                Target = otherNode,
+                                RelationKind = "Loop Boundary",
+                                SourceLocation = GetLocationString(forStatement.Condition.GetLocation())
+                            };
+                            currentNode.Edges.Add(edge);
+
+                            await TraceDataFlowBackwardAsync(
+                                solution,
+                                otherSymbol,
+                                otherNode,
+                                graph,
+                                depth + 1,
+                                cancellationToken);
+                        }
+                    }
                 }
             }
         }
