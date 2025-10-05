@@ -25,17 +25,29 @@ namespace Discernment
         public VariableInsightWindowDataContext()
         {
             SelectNodeCommand = new AsyncCommand((parameter, cancellationToken) => 
-                SelectNodeAsync(parameter as InsightNodeViewModel, cancellationToken));
+            {
+                var node = parameter as InsightNodeViewModel;
+                if (node != null)
+                    SelectedNode = node;
+                return Task.CompletedTask;
+            });
+            
+            NavigateToSourceCommand = new AsyncCommand((parameter, cancellationToken) => 
+                NavigateToSourceAsync(parameter as InsightNodeViewModel, cancellationToken));
         }
 
         [DataMember]
         public AsyncCommand SelectNodeCommand { get; }
-
-        private async Task SelectNodeAsync(InsightNodeViewModel? node, CancellationToken cancellationToken)
+        
+        [DataMember]
+        public AsyncCommand NavigateToSourceCommand { get; }
+        
+        private async Task NavigateToSourceAsync(InsightNodeViewModel? node, CancellationToken cancellationToken)
         {
             if (node == null)
                 return;
-
+            
+            // Select the node first
             SelectedNode = node;
             
             // Notify the window to navigate to the source

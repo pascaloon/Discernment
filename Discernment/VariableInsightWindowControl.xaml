@@ -174,17 +174,98 @@
                                         <Run Text="{Binding Type}" FontWeight="Bold"/>
                                     </TextBlock>
                                     
-                                    <!-- Source Code Line -->
-                                    <Border Background="#FF1E1E1E" 
+                                    <!-- Source Code Line with Goto Button -->
+                                    <Border x:Name="SourceCodeBorder"
+                                            Background="#FF1E1E1E" 
                                             BorderBrush="#FF3F3F46"
                                             BorderThickness="1"
                                             Padding="8,5"
                                             Margin="0,5,0,5">
-                                        <TextBlock Text="{Binding SourceCode}" 
-                                                  FontFamily="Consolas"
-                                                  FontSize="11"
-                                                  Foreground="#FFD4D4D4"
-                                                  TextWrapping="Wrap"/>
+                                        <Grid>
+                                            <TextBlock Text="{Binding SourceCode}" 
+                                                      FontFamily="Consolas"
+                                                      FontSize="11"
+                                                      Foreground="#FFD4D4D4"
+                                                      TextWrapping="Wrap"
+                                                      Margin="0,0,35,0"/>
+                                            
+                                            <!-- Goto Button (appears on hover) -->
+                                            <Button x:Name="GotoButton"
+                                                    HorizontalAlignment="Right"
+                                                    VerticalAlignment="Top"
+                                                    Width="28"
+                                                    Height="28"
+                                                    Background="#FF555555"
+                                                    BorderThickness="0"
+                                                    Cursor="Hand"
+                                                    Opacity="0"
+                                                    Command="{Binding DataContext.NavigateToSourceCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}"
+                                                    ToolTip="Go to source location">
+                                                <Button.Template>
+                                                    <ControlTemplate TargetType="Button">
+                                                        <Border x:Name="ButtonBorder"
+                                                                Background="{TemplateBinding Background}"
+                                                                CornerRadius="3"
+                                                                BorderThickness="0">
+                                                            <!-- Arrow Icon (→) -->
+                                                            <TextBlock x:Name="ArrowIcon"
+                                                                      Text="→" 
+                                                                      FontSize="18"
+                                                                      FontWeight="Bold"
+                                                                      Foreground="White"
+                                                                      HorizontalAlignment="Center"
+                                                                      VerticalAlignment="Center"
+                                                                      Margin="0,-2,0,0">
+                                                                <TextBlock.RenderTransform>
+                                                                    <ScaleTransform ScaleX="1" ScaleY="1" CenterX="9" CenterY="9"/>
+                                                                </TextBlock.RenderTransform>
+                                                            </TextBlock>
+                                                        </Border>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Trigger.EnterActions>
+                                                                    <BeginStoryboard>
+                                                                        <Storyboard>
+                                                                            <ColorAnimation Storyboard.TargetName="ButtonBorder"
+                                                                                          Storyboard.TargetProperty="Background.Color"
+                                                                                          To="#FF007ACC"
+                                                                                          Duration="0:0:0.15"/>
+                                                                            <DoubleAnimation Storyboard.TargetName="ArrowIcon"
+                                                                                           Storyboard.TargetProperty="RenderTransform.ScaleX"
+                                                                                           To="1.15"
+                                                                                           Duration="0:0:0.15"/>
+                                                                            <DoubleAnimation Storyboard.TargetName="ArrowIcon"
+                                                                                           Storyboard.TargetProperty="RenderTransform.ScaleY"
+                                                                                           To="1.15"
+                                                                                           Duration="0:0:0.15"/>
+                                                                        </Storyboard>
+                                                                    </BeginStoryboard>
+                                                                </Trigger.EnterActions>
+                                                                <Trigger.ExitActions>
+                                                                    <BeginStoryboard>
+                                                                        <Storyboard>
+                                                                            <ColorAnimation Storyboard.TargetName="ButtonBorder"
+                                                                                          Storyboard.TargetProperty="Background.Color"
+                                                                                          To="#FF555555"
+                                                                                          Duration="0:0:0.15"/>
+                                                                            <DoubleAnimation Storyboard.TargetName="ArrowIcon"
+                                                                                           Storyboard.TargetProperty="RenderTransform.ScaleX"
+                                                                                           To="1"
+                                                                                           Duration="0:0:0.15"/>
+                                                                            <DoubleAnimation Storyboard.TargetName="ArrowIcon"
+                                                                                           Storyboard.TargetProperty="RenderTransform.ScaleY"
+                                                                                           To="1"
+                                                                                           Duration="0:0:0.15"/>
+                                                                        </Storyboard>
+                                                                    </BeginStoryboard>
+                                                                </Trigger.ExitActions>
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Button.Template>
+                                            </Button>
+                                        </Grid>
                                     </Border>
                                     
                                         <!-- Location -->
@@ -211,6 +292,9 @@
                                     <Setter TargetName="NodeBorder" Property="BorderBrush" Value="#FF007ACC"/>
                                     <Setter TargetName="NodeBorder" Property="BorderThickness" Value="3"/>
                                 </DataTrigger>
+                                <Trigger SourceName="SourceCodeBorder" Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="GotoButton" Property="Opacity" Value="1"/>
+                                </Trigger>
                             </DataTemplate.Triggers>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
