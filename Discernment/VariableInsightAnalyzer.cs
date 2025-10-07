@@ -20,6 +20,7 @@ namespace Discernment
         private readonly HashSet<ISymbol> _visitedSymbols = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<ISymbol, InsightNode> _symbolToNodeMap = new(SymbolEqualityComparer.Default);
         private readonly Dictionary<IMethodSymbol, InvocationExpressionSyntax> _methodInvocations = new(SymbolEqualityComparer.Default);
+        private readonly HashSet<string> _processedParameterInvocations = new(); // Track processed parameter-invocation pairs
         private Solution? _solution;
 
         /// <summary>
@@ -747,6 +748,7 @@ namespace Discernment
 
         /// <summary>
         /// Traces a parameter back to its argument at the call site.
+        /// Implements Rule 10: Finds ALL call sites and maps the parameter to arguments at each call site.
         /// </summary>
         private async Task TraceParameterToArgumentAsync(
             Solution solution,
@@ -761,12 +763,91 @@ namespace Discernment
             if (containingMethod == null)
                 return;
 
-            // Try to find the invocation for this method
-            if (!_methodInvocations.TryGetValue(containingMethod, out var invocation))
+            // Rule 10: When a parameter is analyzed, we must go through ALL references of that method,
+            // map the parameter at each call site, and consider all passed arguments as concerned variables.
+            
+            // Find all references to the containing method
+            var methodReferences = await SymbolFinder.FindReferencesAsync(containingMethod, solution, cancellationToken);
+
+            foreach (var methodReference in methodReferences)
+            {
+                foreach (var location in methodReference.Locations)
+                {
+                    var document = solution.GetDocument(location.Document.Id);
+                    if (document == null)
+                        continue;
+
+                    var semanticModel = await document.GetSemanticModelAsync(cancellationToken);
+                    var root = await document.GetSyntaxRootAsync(cancellationToken);
+                    if (semanticModel == null || root == null)
+                        continue;
+
+                    var node = root.FindNode(location.Location.SourceSpan);
+
+                    // Check if this is a method invocation
+                    InvocationExpressionSyntax? invocation = null;
+                    
+                    // The node might be the method name, so we need to find the InvocationExpressionSyntax
+                    if (node.Parent is MemberAccessExpressionSyntax memberAccess &&
+                        memberAccess.Parent is InvocationExpressionSyntax invocationFromMember)
+                    {
+                        invocation = invocationFromMember;
+                    }
+                    else if (node.Parent is InvocationExpressionSyntax directInvocation)
+                    {
+                        invocation = directInvocation;
+                    }
+                    else
+                    {
+                        // Try to find invocation in ancestors
+                        invocation = node.AncestorsAndSelf().OfType<InvocationExpressionSyntax>().FirstOrDefault();
+                    }
+
+                    if (invocation != null)
+                    {
+                        // Verify this invocation actually calls our method
+                        var invokedSymbol = semanticModel.GetSymbolInfo(invocation, cancellationToken).Symbol as IMethodSymbol;
+                        if (invokedSymbol != null && SymbolEqualityComparer.Default.Equals(invokedSymbol, containingMethod))
+                        {
+                            // Map this parameter to the argument at this call site
+                            await MapParameterToArgumentAtInvocationAsync(
+                                solution,
+                                parameter,
+                                invocation,
+                                containingMethod,
+                                parameterNode,
+                                graph,
+                                depth,
+                                cancellationToken);
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Maps a parameter to its corresponding argument at a specific invocation site.
+        /// </summary>
+        private async Task MapParameterToArgumentAtInvocationAsync(
+            Solution solution,
+            IParameterSymbol parameter,
+            InvocationExpressionSyntax invocation,
+            IMethodSymbol containingMethod,
+            InsightNode parameterNode,
+            VariableInsightGraph graph,
+            int depth,
+            CancellationToken cancellationToken)
+        {
+            // Create a unique key for this parameter-invocation pair to avoid duplicate processing
+            var invocationKey = $"{parameter.ToDisplayString()}@{invocation.GetLocation()?.GetLineSpan().Path}:{invocation.GetLocation()?.GetLineSpan().StartLinePosition.Line}";
+            if (_processedParameterInvocations.Contains(invocationKey))
+            {
+                // Already processed this parameter at this invocation site
                 return;
+            }
+            _processedParameterInvocations.Add(invocationKey);
 
             // Get semantic model for the invocation site
-            var invocationRoot = await invocation.SyntaxTree.GetRootAsync(cancellationToken);
             var invocationDoc = solution.GetDocument(invocation.SyntaxTree);
             var invocationSemanticModel = invocationDoc != null ? await invocationDoc.GetSemanticModelAsync(cancellationToken) : null;
             

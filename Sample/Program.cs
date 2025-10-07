@@ -226,7 +226,7 @@ namespace Sample
             int temp1 = p2 * 4;
             
             // temp2 IS part of return - should be in graph
-            int temp2 = someGlobalVariable * 5;
+            int temp2 = p1 * 5;
             
             // Only temp2 (and therefore p2) affects the return value
             return temp2 * 2;
@@ -310,6 +310,44 @@ namespace Sample
                 l.Add(i.ToString());
                 SomeOtherGlobalVariable++;
             }
+        }
+
+        static void SomeOtherMethod()
+        {
+            int v1 = 1;
+            int v2 = 2;
+            int v3 = 3;
+            SomeMethod(v1, v2, v3);
+        }
+
+        static void SomeOtherMethod2()
+        {
+            int w1 = 1;
+            int w2 = 2;
+            int w3 = 3;
+            SomeMethod(w1, w2, w3);
+        }
+
+        static void SomeMethod(int p1, int p2, int p3)
+        {
+            int t = p2 * 2;
+            int r = p1 + p3;
+        }
+
+        static int Fact(int n)
+        {
+            if (n <= 1)
+                return 1;
+
+            int next = n - 1;
+            return n * Fact(next);
+        }
+
+        static void CallFactWith6()
+        {
+            int paul = 6;
+            int result = Fact(paul);
+            Console.WriteLine($"Fact(6) = {result}");
         }
 
         // ==================== Helper Classes ====================

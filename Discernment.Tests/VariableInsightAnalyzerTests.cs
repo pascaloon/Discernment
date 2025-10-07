@@ -447,4 +447,90 @@ class Program
         var lEdges = lNode.Edges.ToList();
         Assert.Contains(lEdges, e => e.Target.Name == "list");
     }
+
+    [Fact]
+    public async Task Example6_ExtendingAffectantsBeyondOriginalScope()
+    {
+        var code = @"
+using System;
+
+class Program
+{
+    static void Main()
+    {
+        SomeOtherMethod();
+        SomeOtherMethod2();
+    }
+
+    static void SomeOtherMethod()
+    {
+        int v1 = 1;
+        int v2 = 2;
+        int v3 = 3;
+        SomeMethod(v1, v2, v3);
+    }
+
+    static void SomeOtherMethod2()
+    {
+        int w1 = 1;
+        int w2 = 2;
+        int w3 = 3;
+        SomeMethod(w1, w2, w3);
+    }
+
+    static void SomeMethod(int p1, int p2, int p3)
+    {
+        int t = p2 * 2;
+        int r = p1 + p3;
+    }
+}";
+
+        var graph = await AnalyzeAsync(code, "r");
+        
+        Assert.NotNull(graph);
+        Assert.Equal("r", graph.RootNode.Name);
+
+        // r (root) -> p1 (depends on parameter)
+        // r (root) -> p3 (depends on parameter)
+        var rootEdges = graph.RootNode.Edges.ToList();
+        Assert.Contains(rootEdges, e => e.Target.Name == "p1");
+        Assert.Contains(rootEdges, e => e.Target.Name == "p3");
+
+        // p1 should map to call sites
+        var p1Node = rootEdges.First(e => e.Target.Name == "p1").Target;
+        var p1Edges = p1Node.Edges.ToList();
+        
+        // Debug output
+        Console.WriteLine($"p1 has {p1Edges.Count} edges:");
+        foreach (var edge in p1Edges)
+        {
+            Console.WriteLine($"  p1 -> {edge.Target.Name} ({edge.RelationKind})");
+        }
+
+        // p1 should have edges to both v1 and w1 (from the two call sites)
+        Assert.Contains(p1Edges, e => e.Target.Name == "v1");
+        Assert.Contains(p1Edges, e => e.Target.Name == "w1");
+
+        // p3 should map to call sites
+        var p3Node = rootEdges.First(e => e.Target.Name == "p3").Target;
+        var p3Edges = p3Node.Edges.ToList();
+        
+        // Debug output
+        Console.WriteLine($"p3 has {p3Edges.Count} edges:");
+        foreach (var edge in p3Edges)
+        {
+            Console.WriteLine($"  p3 -> {edge.Target.Name} ({edge.RelationKind})");
+        }
+
+        // p3 should have edges to both v3 and w3 (from the two call sites)
+        Assert.Contains(p3Edges, e => e.Target.Name == "v3");
+        Assert.Contains(p3Edges, e => e.Target.Name == "w3");
+
+        // p2 should NOT be in the graph (doesn't affect r)
+        Assert.DoesNotContain(rootEdges, e => e.Target.Name == "p2");
+        
+        // v2 and w2 should NOT be in the graph (p2 doesn't affect r)
+        Assert.DoesNotContain(graph.AllNodes, n => n.Name == "v2");
+        Assert.DoesNotContain(graph.AllNodes, n => n.Name == "w2");
+    }
 }

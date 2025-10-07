@@ -207,3 +207,44 @@ i -> count // when we see i refered in if/for/foreach/while we consider the othe
 
 l -> list // callsite mapping
 ```
+
+## Example 6: Extemdomg Affectants beyond original scope
+
+```cs
+
+void SomeOtherMethod()
+{
+    int v1 = 1;
+    int v2 = 2;
+    int v3 = 3;
+    SomeMethod(v1, v2, v3);
+}
+
+void SomeOtherMethod2()
+{
+    int w1 = 1;
+    int w2 = 2;
+    int w3 = 3;
+    SomeMethod(w1, w2, w3);
+}
+
+void SomeMethod(int p1, int p2, int p3)
+{
+    int t = p2 * 2;
+    int r = p1 + p3;
+}
+```
+
+Expected graph:
+```
+r (root) -> p1; // x depends on the invocation of the current method (it is not a local variable) (we need to expant the scope)
+r (root) -> p3; // x depends on the invocation of the current method (it is not a local variable) (we need to expant the scope)
+
+x -> SomeMethod(v1, v2, v3); // we create a node for the call site and we continue for v1, v2
+SomeMethod -> v1; // will impact x
+SomeMethod -> v3; // will impact x
+SomeMethod -> w1; // will impact x
+SomeMethod -> w3; // will impact x
+
+
+```

@@ -12,5 +12,6 @@ To do so, here are the steps:
 7. The algorithm continues recursively until all concerned variables are analyzed.
 8. The algorithm returns the graph of all concerned variables and their affectants.
 9. the edges between the nodes are labeled with the type of relation between the nodes.
+10. If the concerned variable is a parameter of a method and that method hasn't been listed as a node before it means that the affectants aren't bound to a specific call of that method, therefore, we most go through all references of that method, map the parameter at the call site and then considered all passed parameters as concerned variables too.
 
 All the examples listed in GraphResultsExamples.md are still valid and should be the source of the unit tests.
